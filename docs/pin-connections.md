@@ -1,5 +1,11 @@
 # Jetson 핀 → 부품 단자 연결표
 
+**현재 작업은 LED Bar**다. 아래 LED1~8 매핑을 그대로 사용하는 코드와 새 DT를
+준비했다. [LED Bar 설치·시험 순서](ledbar-run.md)를 따른다. 실제 출력 적용은
+새 DT 설치·재부팅·새 module 적재 후이며, 이전 `예약안` 표현은 조사 이력이다.
+
+**Encoder 현재 소프트웨어/DT 구성**: S1→물리12, S2→물리38. 새 DT의 실제 부팅 적용을 확인했지만 회전 입력은 아직 무응답이다. [최신 조사와 진단 명령](encoder-audit.md), [변경·복구 순서](encoder-alt-pin-trial.md)를 따른다. Encoder 전원=3.3V, KEY미사용; Motor ENA→32, IN1→15(PWM1), IN2→29. 아래 초기 후보 표는 조사 이력이다.
+
 2026-10-08 상세 사진 반영. **여기의 Jetson 번호는 모두 J12의 물리 핀 번호**다.
 Linux GPIO 번호나 gpiochip offset으로 세지 않는다.
 

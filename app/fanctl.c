@@ -16,6 +16,8 @@
 #include <unistd.h>
 
 #include "smartfan_uapi.h"
+#include "encoder.h"
+#include "lcd.h"
 
 struct backend
 {
@@ -24,6 +26,13 @@ struct backend
     struct smartfan_status state;
     uint64_t lease_deadline;
     uint64_t on_deadline;
+    uint64_t boost_deadline;
+    uint32_t level;
+    uint32_t last_nonzero;
+    bool legacy;
+    bool led_test;
+    uint32_t led_count;
+    struct lcd_display *lcd;
 };
 
 static volatile sig_atomic_t received_signal;
@@ -67,6 +76,8 @@ static const char *reason_name(uint32_t reason)
         return "lease";
     case SMARTFAN_STOP_MAX_ON:
         return "max_on";
+    case SMARTFAN_STOP_PWM_ERROR:
+        return "pwm_error";
     case SMARTFAN_STOP_REMOVE:
         return "remove";
     default:
@@ -88,6 +99,8 @@ static void dry_expire(struct backend *backend, uint64_t now)
         backend->state.running = 0;
         backend->state.stop_reason = SMARTFAN_STOP_LEASE;
     }
+    if (!backend->state.running)
+        backend->led_test = false;
 }
 
 static int backend_get(struct backend *backend, struct smartfan_status *state)
@@ -123,6 +136,7 @@ static int backend_set(struct backend *backend, bool enabled)
         return ioctl(backend->fd, SMARTFAN_IOC_SET, &request);
     uint64_t now = now_ms();
     dry_expire(backend, now);
+    backend->led_test = false;
     if (!enabled)
     {
         backend->state.running = 0;
@@ -131,7 +145,13 @@ static int backend_set(struct backend *backend, bool enabled)
     else
     {
         if (!backend->state.running)
+        {
+            if (!backend->level)
+                backend->level = backend->last_nonzero;
             backend->on_deadline = now + backend->state.max_on_ms;
+            backend->boost_deadline = backend->level < SMARTFAN_MAX_SPEED_LEVEL
+                ? now + SMARTFAN_DEFAULT_BOOST_MS : 0;
+        }
         backend->state.running = 1;
         backend->lease_deadline = now + backend->state.lease_ms;
     }
@@ -156,6 +176,154 @@ static int backend_heartbeat(struct backend *backend)
     return 0;
 }
 
+static int backend_get_speed(struct backend *backend, struct smartfan_speed_status *speed)
+{
+    memset(speed, 0, sizeof(*speed));
+    if (!backend->dry_run && !backend->legacy)
+    {
+        if (ioctl(backend->fd, SMARTFAN_IOC_GET_SPEED, speed) == 0)
+        {
+            if (speed->abi_version != SMARTFAN_ABI_VERSION ||
+                speed->max_level != SMARTFAN_MAX_SPEED_LEVEL ||
+                speed->level > speed->max_level || speed->duty_percent > 100)
+            {
+                errno = EPROTO;
+                return -1;
+            }
+            backend->level = speed->level;
+            return 0;
+        }
+        if (errno != ENOTTY)
+            return -1;
+        backend->legacy = true;
+    }
+    struct smartfan_status state;
+    if (backend_get(backend, &state) < 0)
+        return -1;
+    uint64_t now = now_ms();
+    speed->abi_version = SMARTFAN_ABI_VERSION;
+    speed->level = backend->level;
+    speed->max_level = SMARTFAN_MAX_SPEED_LEVEL;
+    if (backend->dry_run)
+    {
+        speed->capabilities = SMARTFAN_CAP_PWM | SMARTFAN_CAP_LED_BAR;
+        speed->period_ns = SMARTFAN_DEFAULT_PWM_PERIOD_NS;
+        if (state.running && now < backend->boost_deadline)
+            speed->boost_remaining_ms = (uint32_t)(backend->boost_deadline - now);
+    }
+    speed->duty_percent = !state.running ? 0 : speed->boost_remaining_ms ? 100 :
+        smartfan_level_duty(backend->level);
+    return 0;
+}
+
+static int backend_set_speed(struct backend *backend, uint32_t level)
+{
+    struct smartfan_speed_request request = {
+        .abi_version = SMARTFAN_ABI_VERSION, .level = level,
+    };
+    if (!backend->dry_run)
+    {
+        if (backend->legacy)
+        {
+            errno = EOPNOTSUPP;
+            return -1;
+        }
+        return ioctl(backend->fd, SMARTFAN_IOC_SET_SPEED, &request);
+    }
+    dry_expire(backend, now_ms());
+    backend->led_test = false;
+    backend->level = level;
+    if (!level)
+        return backend_set(backend, false);
+    backend->last_nonzero = level;
+    if (backend->state.running)
+        backend->lease_deadline = now_ms() + backend->state.lease_ms;
+    return 0;
+}
+
+static int backend_get_leds(struct backend *backend, struct smartfan_led_status *leds)
+{
+    memset(leds, 0, sizeof(*leds));
+    if (!backend->dry_run)
+    {
+        if (ioctl(backend->fd, SMARTFAN_IOC_GET_LEDS, leds) < 0)
+        {
+            if (errno != ENOTTY)
+                return -1;
+            leds->abi_version = SMARTFAN_ABI_VERSION;
+            return 0;
+        }
+        if (leds->abi_version != SMARTFAN_ABI_VERSION ||
+            leds->mode > SMARTFAN_LED_TEST || leds->count > SMARTFAN_LED_SEGMENTS ||
+            leds->available > 1)
+        {
+            errno = EPROTO;
+            return -1;
+        }
+        return 0;
+    }
+    dry_expire(backend, now_ms());
+    leds->abi_version = SMARTFAN_ABI_VERSION;
+    leds->available = 1;
+    leds->mode = backend->led_test ? SMARTFAN_LED_TEST : SMARTFAN_LED_AUTO;
+    leds->count = backend->led_test ? backend->led_count :
+        backend->state.running ? smartfan_level_leds(backend->level) : 0;
+    return 0;
+}
+
+static int backend_set_leds(struct backend *backend, bool test, uint32_t count)
+{
+    struct smartfan_led_request request = {
+        .abi_version = SMARTFAN_ABI_VERSION,
+        .mode = test ? SMARTFAN_LED_TEST : SMARTFAN_LED_AUTO, .count = count,
+    };
+    if (!backend->dry_run)
+        return ioctl(backend->fd, SMARTFAN_IOC_SET_LEDS, &request);
+    dry_expire(backend, now_ms());
+    if (test && backend->state.running)
+    {
+        errno = EBUSY;
+        return -1;
+    }
+    backend->led_test = test;
+    backend->led_count = count;
+    return 0;
+}
+
+static int print_speed(struct backend *backend)
+{
+    struct smartfan_speed_status speed;
+    if (backend_get_speed(backend, &speed) < 0)
+        return -1;
+    printf("SPEED level=%" PRIu32 "/%" PRIu32 " duty=%" PRIu32
+           "%% pwm=%u period_ns=%" PRIu32 " boost_remaining_ms=%" PRIu32 "\n",
+           (uint32_t)speed.level, (uint32_t)speed.max_level,
+           (uint32_t)speed.duty_percent, !!(speed.capabilities & SMARTFAN_CAP_PWM),
+           (uint32_t)speed.period_ns, (uint32_t)speed.boost_remaining_ms);
+    struct smartfan_led_status leds;
+    if (backend_get_leds(backend, &leds) < 0)
+        return -1;
+    printf("LEDBAR available=%u mode=%s count=%u/8\n", (unsigned int)leds.available,
+           leds.mode == SMARTFAN_LED_TEST ? "test" : "auto", (unsigned int)leds.count);
+    if (backend->lcd)
+    {
+        struct smartfan_status state;
+        if (backend_get(backend, &state) < 0)
+            return -1;
+        lcd_publish(backend->lcd, state.running != 0, speed.level,
+                    !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count);
+    }
+    return 0;
+}
+
+static int change_level(struct backend *backend, int delta)
+{
+    struct smartfan_speed_status speed;
+    if (backend_get_speed(backend, &speed) < 0)
+        return -1;
+    return backend_set_speed(backend, encoder_clamp_level(speed.level, delta, speed.max_level));
+}
+
 static void print_state(const struct smartfan_status *state)
 {
     if (state->running)
@@ -175,7 +343,10 @@ static void usage(FILE *out, const char *program)
 {
     fprintf(out, "Usage: %s [--dry-run | --device PATH]\n"
                  "       [--lease-ms N --max-on-ms N] (dry-run only)\n"
-                 "Commands: on, off, status, heartbeat, help, quit\n"
+                 "Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, heartbeat, help, quit\n"
+                 "       [--encoder [--encoder-chip PATH] [--reverse-encoder]]\n"
+                 "       [--lcd --lcd-address 0x27 [--lcd-bus /dev/i2c-7]]\n"
+                 "Dry-run encoder simulation: cw, ccw (requires --encoder).\n"
                  "Keep this foreground process open while the fan is ON.\n",
             program);
 }
@@ -196,7 +367,8 @@ static int parse_ms(const char *text, uint32_t minimum, uint32_t maximum,
 }
 
 /* Return 1 for quit, -1 for a backend error, 0 to continue. */
-static int command(struct backend *backend, char *line, bool *known_running)
+static int command(struct backend *backend, char *line, bool *known_running,
+                   bool encoder_enabled, bool reverse_encoder)
 {
     struct smartfan_status state;
     if (received_signal)
@@ -213,7 +385,7 @@ static int command(struct backend *backend, char *line, bool *known_running)
         return 1;
     if (!strcmp(line, "help"))
     {
-        puts("Commands: on, off, status, heartbeat, help, quit");
+        puts("Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, heartbeat, help, quit");
         return 0;
     }
     if (!strcmp(line, "on"))
@@ -234,6 +406,48 @@ static int command(struct backend *backend, char *line, bool *known_running)
             errno != EPIPE && errno != ETIMEDOUT)
             return -1;
     }
+    else if (!strncmp(line, "speed ", 6))
+    {
+        uint32_t level;
+        if (parse_ms(line + 6, 0, SMARTFAN_MAX_SPEED_LEVEL, &level))
+        {
+            fputs("ERR speed must be an integer 0..5\n", stderr);
+            return 0;
+        }
+        if (backend_set_speed(backend, level) < 0)
+            return -1;
+    }
+    else if (!strncmp(line, "led ", 4))
+    {
+        uint32_t count = 0;
+        bool test = strcmp(line + 4, "auto") != 0;
+        if (test && parse_ms(line + 4, 0, SMARTFAN_LED_SEGMENTS, &count))
+        {
+            fputs("ERR led must be an integer 0..8 or auto\n", stderr);
+            return 0;
+        }
+        if (backend_set_leds(backend, test, count) < 0)
+        {
+            if (errno == EBUSY || errno == EOPNOTSUPP || errno == ENOTTY)
+            {
+                fprintf(stderr, "ERR LED Bar: %s (test requires motor OFF and LED DT/driver)\n", strerror(errno));
+                return 0;
+            }
+            return -1;
+        }
+    }
+    else if (!strcmp(line, "up") || !strcmp(line, "down"))
+    {
+        if (change_level(backend, !strcmp(line, "up") ? 1 : -1) < 0)
+            return -1;
+    }
+    else if (backend->dry_run && encoder_enabled &&
+             (!strcmp(line, "cw") || !strcmp(line, "ccw")))
+    {
+        int delta = !strcmp(line, "cw") ? 1 : -1;
+        if (change_level(backend, reverse_encoder ? -delta : delta) < 0)
+            return -1;
+    }
     else if (strcmp(line, "status"))
     {
         fprintf(stderr, "ERR unknown command: %s\n", line);
@@ -243,7 +457,7 @@ static int command(struct backend *backend, char *line, bool *known_running)
         return -1;
     *known_running = state.running != 0;
     print_state(&state);
-    return 0;
+    return print_speed(backend);
 }
 
 int main(int argc, char **argv)
@@ -253,11 +467,19 @@ int main(int argc, char **argv)
         {"device", required_argument, NULL, 'd'},
         {"lease-ms", required_argument, NULL, 'l'},
         {"max-on-ms", required_argument, NULL, 'm'},
+        {"encoder", no_argument, NULL, 'e'},
+        {"encoder-chip", required_argument, NULL, 'c'},
+        {"reverse-encoder", no_argument, NULL, 'r'},
+        {"lcd", no_argument, NULL, 'L'},
+        {"lcd-bus", required_argument, NULL, 'B'},
+        {"lcd-address", required_argument, NULL, 'A'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
     struct backend backend = {
         .fd = -1,
+        .level = SMARTFAN_MAX_SPEED_LEVEL,
+        .last_nonzero = SMARTFAN_MAX_SPEED_LEVEL,
         .state = {
             .abi_version = SMARTFAN_ABI_VERSION,
             .lease_ms = SMARTFAN_DEFAULT_LEASE_MS,
@@ -266,6 +488,13 @@ int main(int argc, char **argv)
         },
     };
     struct smartfan_status state;
+    struct encoder_input encoder = {.fd = -1};
+    bool encoder_enabled = false, reverse_encoder = false;
+    bool lcd_enabled = false, lcd_bus_selected = false, lcd_address_selected = false;
+    bool lcd_warned = false;
+    const char *lcd_bus = "/dev/i2c-7";
+    unsigned int lcd_address = 0x27;
+    const char *encoder_chip = NULL;
     struct sigaction action = {0};
     const char *device = "/dev/smartfan";
     const char *exit_reason = "eof";
@@ -279,6 +508,8 @@ int main(int argc, char **argv)
 
     _Static_assert(sizeof(struct smartfan_request) == 16, "SET ABI size");
     _Static_assert(sizeof(struct smartfan_status) == 32, "GET ABI size");
+    _Static_assert(sizeof(struct smartfan_speed_request) == 16, "SET_SPEED ABI size");
+    _Static_assert(sizeof(struct smartfan_speed_status) == 32, "GET_SPEED ABI size");
     while ((option = getopt_long(argc, argv, "", options, NULL)) != -1)
     {
         switch (option)
@@ -300,6 +531,24 @@ int main(int argc, char **argv)
             if (parse_ms(optarg, 1000U, 120000U, &backend.state.max_on_ms))
                 goto invalid_options;
             break;
+        case 'e': encoder_enabled = true; break;
+        case 'c': encoder_chip = optarg; break;
+        case 'r': reverse_encoder = true; break;
+        case 'L': lcd_enabled = true; break;
+        case 'B': lcd_bus = optarg; lcd_bus_selected = true; break;
+        case 'A':
+        {
+            char *end;
+            errno = 0;
+            if (optarg[0] < '0' || optarg[0] > '9') goto invalid_options;
+            unsigned long address = strtoul(optarg, &end, 0);
+            if (errno || *end || !((address >= 0x20 && address <= 0x27) ||
+                                  (address >= 0x38 && address <= 0x3f)))
+                goto invalid_options;
+            lcd_address = (unsigned int)address;
+            lcd_address_selected = true;
+            break;
+        }
         case 'h':
             usage(stdout, argv[0]);
             return EXIT_SUCCESS;
@@ -309,7 +558,12 @@ int main(int argc, char **argv)
     }
     if (optind != argc || (backend.dry_run && device_selected) ||
         (!backend.dry_run && timeout_selected) ||
-        backend.state.lease_ms > backend.state.max_on_ms)
+        backend.state.lease_ms > backend.state.max_on_ms ||
+        (!encoder_enabled && (encoder_chip || reverse_encoder)) ||
+        (backend.dry_run && encoder_chip) ||
+        (!lcd_enabled && (lcd_bus_selected || lcd_address_selected)) ||
+        (lcd_enabled && (strlen(lcd_bus) >= 128 || !lcd_bus[0] ||
+                         (!backend.dry_run && !lcd_address_selected))))
         goto invalid_options;
 
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -350,6 +604,42 @@ int main(int argc, char **argv)
         result = EXIT_FAILURE;
         goto cleanup;
     }
+    if (lcd_enabled)
+    {
+        if (lcd_start(&backend.lcd, lcd_bus, lcd_address, backend.dry_run) < 0)
+        {
+            perror("start LCD worker");
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        printf("LCD_CONFIG bus=%s address=0x%02x mapping=RS0/RW1/E2/BL3/D4..7\n",
+               lcd_bus, lcd_address);
+    }
+    if (print_speed(&backend) < 0)
+    {
+        perror("get speed");
+        result = EXIT_FAILURE;
+        goto cleanup;
+    }
+    if (encoder_enabled && !backend.dry_run)
+    {
+        struct smartfan_speed_status speed;
+        if (backend_get_speed(&backend, &speed) < 0 ||
+            !(speed.capabilities & SMARTFAN_CAP_PWM))
+        {
+            fputs("ERR encoder requires stage 2 PWM DT and driver\n", stderr);
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        if (encoder_open(&encoder, encoder_chip, reverse_encoder) < 0)
+        {
+            perror("open encoder");
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        printf("ENCODER %s S1=%u S2=%u reverse=%u\n", encoder.chip_path,
+               ENCODER_S1_OFFSET, ENCODER_S2_OFFSET, reverse_encoder);
+    }
     heartbeat_interval = state.lease_ms / 4U;
     if (heartbeat_interval > 250U)
         heartbeat_interval = 250U;
@@ -362,9 +652,10 @@ int main(int argc, char **argv)
 
     while (!done && !received_signal)
     {
-        struct pollfd descriptors[2] = {
+        struct pollfd descriptors[3] = {
             {.fd = STDIN_FILENO, .events = POLLIN},
             {.fd = wake_pipe[0], .events = POLLIN},
+            {.fd = encoder.fd, .events = POLLIN},
         };
         uint64_t now = now_ms();
         if (backend_get(&backend, &state) < 0)
@@ -391,7 +682,31 @@ int main(int argc, char **argv)
             }
             next_heartbeat = now_ms() + heartbeat_interval;
         }
-        int ready = poll(descriptors, 2, 50);
+        if (backend.lcd)
+        {
+            struct smartfan_speed_status speed;
+            struct smartfan_led_status leds;
+            if (backend_get_speed(&backend, &speed) < 0 ||
+                backend_get_leds(&backend, &leds) < 0 ||
+                backend_get(&backend, &state) < 0)
+            {
+                perror("get LCD status");
+                result = EXIT_FAILURE;
+                exit_reason = "error";
+                break;
+            }
+            lcd_publish(backend.lcd, state.running != 0, speed.level,
+                        !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count);
+            int error = lcd_error(backend.lcd);
+            if (error && !lcd_warned)
+            {
+                fprintf(stderr, "WARN LCD disabled: %s; motor control continues\n", strerror(error));
+                if (error == EOPNOTSUPP && !strcmp(lcd_bus, "/dev/i2c-7"))
+                    fputs("LCD requires header I2C at 100kHz: install the prepared LCD DT and reboot.\n", stderr);
+                lcd_warned = true;
+            }
+        }
+        int ready = poll(descriptors, 3, 50);
         if (ready < 0)
         {
             if (errno == EINTR)
@@ -403,6 +718,41 @@ int main(int argc, char **argv)
         }
         if (received_signal || descriptors[1].revents)
             break;
+        if (descriptors[2].revents & (POLLERR | POLLHUP | POLLNVAL))
+        {
+            fputs("ERR encoder unavailable\n", stderr);
+            result = EXIT_FAILURE;
+            exit_reason = "error";
+            break;
+        }
+        if (descriptors[2].revents & POLLIN)
+        {
+            int delta;
+            uint64_t gaps = encoder.sequence_gaps;
+            if (encoder_read(&encoder, &delta) < 0)
+            {
+                perror("encoder");
+                result = EXIT_FAILURE;
+                exit_reason = "error";
+                break;
+            }
+            if (encoder.sequence_gaps != gaps)
+                fputs("WARN encoder event gap: discarded partial cycle and resynchronized\n", stderr);
+            /* Apply every detent in order: a net-zero batch can cross STOP. */
+            for (unsigned int i = 0; i < encoder.num_steps && !received_signal; ++i)
+            {
+                if (change_level(&backend, encoder.steps[i]) < 0 || print_speed(&backend) < 0)
+                {
+                    perror("encoder speed");
+                    result = EXIT_FAILURE;
+                    exit_reason = "error";
+                    done = true;
+                    break;
+                }
+            }
+            if (done || received_signal)
+                break;
+        }
         if (descriptors[0].revents & (POLLERR | POLLNVAL))
         {
             fprintf(stderr, "ERR stdin unavailable\n");
@@ -436,7 +786,8 @@ int main(int argc, char **argv)
                     else
                     {
                         line[used] = '\0';
-                        int response = command(&backend, line, &known_running);
+                        int response = command(&backend, line, &known_running,
+                                               encoder_enabled, reverse_encoder);
                         if (response == 1)
                         {
                             done = true;
@@ -475,8 +826,10 @@ int main(int argc, char **argv)
         printf("CLOSED state=OFF reason=%s\n", exit_reason);
     }
 cleanup:
+    encoder_close(&encoder);
     if (backend.fd >= 0)
         close(backend.fd);
+    lcd_finish(backend.lcd);
     /* Block our handlers before closing their write fd to avoid fd reuse races. */
     sigset_t block;
     sigemptyset(&block);

@@ -1,10 +1,42 @@
 # Software Architecture 및 Build 설계
 
-상태: 1단계 software 구현 및 Build 완료. 사용자 지시에 따라 작성/Build를 먼저 진행했고 실제 구동은 미검증이다.
+상태: 1단계 완료. Encoder 진단을 보류하고 LED Bar 구현·software 검증 완료,
+새 DT 설치와 실물 점등 시험 대기.
+최신 상태는 LED Bar 실물 시험 성공 보고, LCD 구현 및 100kHz DT 준비 완료다.
+LCD 전압 변환 배선과 주소/mapping 검증은 남아 있다.
 Software Architecture / Kernel Driver / Build Integration / Test Reliability / Hardware Safety를
 세 서브에이전트와 주 에이전트가 검토하여 통합했다.
 
-## 1단계 최소 구조
+## 2단계 구조
+
+```mermaid
+flowchart TD
+    ENC["Encoder S1/S2: physical 12/38 (alternate-pin trial)"] --> GPIOIN["GPIO v2 edge fd · per-line 2ms debounce"]
+    GPIOIN --> CLI["fanctl poll loop · Gray decoder · level clamp · heartbeat"]
+    CLI --> DEV["/dev/smartfan · motor/speed/LED ioctl"]
+    DEV --> DRV["custom driver · mutex · 단일 deadline worker"]
+    DRV --> EN["GPIO: ENA 32 · IN2 29"]
+    DRV --> PWM["Tegra PWM1: IN1 15 · 250Hz"]
+    EN --> BRIDGE["L298N → motor"]
+    PWM --> BRIDGE
+    DRV --> LED["GPIO 배열: LED Bar 8칸 · 초기/정지 LOW"]
+    CLI --> LCDWORKER["LCD worker · 최신 상태 coalescing"]
+    LCDWORKER --> LCD["i2c-dev · PCF8574 · HD44780 16x2"]
+```
+
+- Encoder 입력은 userspace GPIO v2 line request 한 개로 받는다. Kernel GPIO provider가 edge/debounce를 제공하며 별도 IRQ Driver를 만들지 않는다.
+- 두 신호의 Gray 전이를 한 바퀴(4 edges)씩 decode한다. 방향·상한/하한은 event 순서대로 적용한다. queue sequence gap은 partial cycle을 버리고 현재 값을 재동기화한다.
+- `poll()` 한 loop에서 stdin, Encoder, signal self-pipe와 heartbeat를 처리한다. 한 번에 최대32개 event만 읽어 heartbeat 처리가 밀리지 않도록 한다.
+- Motor PWM은 기존 Tegra provider를 `devm_pwm_get()`/`pwm_apply_state()`로 사용한다. IN1 GPIO를 함께 요청하지 않는다. PWM provider default pinctrl이 PN1 SFIO를 유지한다.
+- EN GPIO를 OFF interlock으로 유지한다. 오류/종료 시 EN부터 LOW로 내린다.
+- level0 정지, level1..5 duty60/70/80/90/100%. 낮은 단계 기동 시100%200ms boost 후 선택 duty로 전환한다. duty와 실제 RPM은 동일하지 않으며 실물 보정이 필요하다.
+- OFF 중 Encoder는 풍속 선택만 변경하며 자동으로 켜지지 않는다. `on`으로 재시작한다. `speed 0` 뒤 `on`은 마지막 nonzero 단계로 복귀한다.
+- Boost, lease2초, 최대ON30초는 한 delayed worker로 처리한다. 풍속 변경은 최대ON deadline을 연장하지 않는다.
+- 기존 ioctl1..3 ABI/크기는 유지하고 SET_SPEED4/GET_SPEED5를 추가했다. Stage1 DT는 GPIO fallback(0/5단계)을 지원한다. 새 CLI도 이전 module의 ON/OFF를 지원한다.
+- LED Bar는 optional `led-gpios` 8개를 Driver가 소유한다. SET_LEDS6/GET_LEDS7를 추가했으며, LED DT가 없는 이전 구성도 지원한다. 자동 모드에서는 running/level에 동기화하고 stop/close/timeout에도 모두 끈다. OFF 전용 시험 모드는 모터를 시작하지 않는다.
+- LCD는 `--lcd` 선택 시 userspace worker 한 개가 I²C fd와 모든 송수신을 소유한다. Main loop는 최신 상태만 전달하고 통신을 기다리지 않는다. 종료는 motor stop/close 후 LCD worker join 순서다. LCD 오류와 SIGKILL에서 표시가 남을 수 있으며 물리적 motor 상태의 증거로 사용하지 않는다.
+
+## 보존한 1단계 구조
 
 ```mermaid
 flowchart TD
@@ -62,7 +94,7 @@ API 근거: 현재 headers의 `include/linux/{gpio/consumer.h,pwm.h,platform_dev
 
 | 단계 | 선택 방향 / 이유 |
 |---|---|
-| Encoder/PWM | Encoder upstream `rotary-encoder`의 별도 module build를 먼저 검토. 불가하면 userspace GPIO edge/Gray decoding. 현재 kernel에 driver 없음 |
+| Encoder/PWM | GPIO v2 userspace edge/Gray decoding 구현. 현재 kernel에 rotary-encoder module 없음 |
 | PWM | hardware PWM 우선. EN GPIO interlock을 유지하고 IN1을 GPIO→PWM으로 전환하는 후보. 같은 pin의 GPIO/PWM 동시 점유 금지. OFF는 EN LOW로 보장하고 실제 파형 확인 |
 | LCD | chip/pin 연결 확인 후 i2c-dev userspace. 이미 kernel Driver가 점유한 주소와 병행 접근 금지 |
 | LED BAR | 강의 LED+330Ω array 방식으로 한 칸부터 평가. 추가 Driver는 밝기/전류/반복 동작 검증 결과로 선택 |

@@ -4,24 +4,82 @@
 
 ## 현재 단계
 
-**1단계 software/DT/GPIO 구동 및 사용자 motor 회전 확인 완료. 종료·반복·재적재 검증은 남아 있다.**
-최신 사용자 지시에 따라 hardware 저항 부하 시험을 코딩의 선행 조건에서 분리했다.
-0단계 전원/배선 검증 및1단계 실물 확인은 아직 완료되지 않았다. 2단계로는 진행하지 않는다.
+**최신 사용자 실물 결과:** LCD를3.3V로 공급하고 contrast 가변저항을 조정했을
+때 화면 문자가 표시되지만 잘 보이지 않는다고 보고했다. 기본 통신/초기화/표시가
+동작한 것으로 보고했고, live DT의 `smartfan-lcd` 및100kHz 적용도 확인했다.
+대비·시인성 검증은 미완료다. 모듈의5V 설계에 따른
+LCD 구동/대비 전압 부족 가능성이 남아 있다. 레벨 시프터 없는5V I²C 직결로
+되돌리지 않는다. 기존3.3V 유지 또는5V+검증된I²C 전압 변환 구성을 선택한다.
 
-| 항목 | 상태 |
+**최신 요청: 레벨 시프터 없이 LCD 시험.** LCD+PCF8574 전체3.3V 공급 시험으로
+절차를 추가했다. PCF logic 동작 범위와 LCD 모듈의 실제 contrast 동작을 구분한다.
+현재 live DT는 여전히 LED Bar 구성/400kHz여서 LCD100kHz 설치가 적용되지 않았음을
+확인했다. `--dry-run`이 실물 송신을 하지 않는 점을 안내하고100kHz 관련 오류
+메시지를 구체화했다. 이번 작업에서도 실제 I²C 송수신은 하지 않았다.
+
+**최신: 사용자 LED Bar 시험 성공 보고. LCD1602/PCF8574T 구현으로 진행.**
+현재 header I²C가 400kHz임을 live DT로 확인해 100kHz 별도 boot proposal을 준비했다.
+사용자는 LCD 5V+PCF8574T/HW-061, 별도 level shifter 없음을 보고했다. 이는
+변환기가 없는 5V 직결 구성으로 해석하며 LCD SDA/SCL 분리와 I²C 레벨 변환이 필요하다.
+이번 작업에서는 LCD bus scan/read/write를 실행하지 않았다.
+LCD 전용 worker, 16자 두 행 갱신, ON/OFF·풍속·LED 칸수 표시와 dry-run preview를
+추가했다. 실제 주소와 backpack mapping은 미검증이다. Build, C protocol/worker
+검사, CLI 18 tests, DT 합성/설치 전 검사 통과. [LCD 실행 안내](lcd-run.md).
+아래 LED 구현/Encoder 기록은 각 시점의 이력이다.
+
+**최신 사용자 지시: Encoder 진단을 보류하고 LED Bar를 먼저 구현.**
+Driver에 optional GPIO 배열과 추가 ioctl6/7, CLI에 `led 0..8`/`led auto`를
+추가했다. 자동 표시에서 OFF=0칸, 풍속1..5=2/4/5/7/8칸이고 startup boost와
+무관하게 선택 단계를 표시한다. 독립 점등 시험은 motor OFF에서만 허용한다.
+close/timeout/remove/suspend에서 LED도 끄며 기존 motor 정책과 ABI는 보존한다.
+`make all`, module W=1 build, encoder C tests, CLI16 tests, DT 합성 및 installer
+preflight 통과. Compiler 경고는 GCC11.4.0의 Ubuntu package revision 차이이며
+숨기지 않았다. 실제 LED GPIO 출력/점등·부하 전류는 미확인이다.
+별도 `/boot/dtb/smartfan-ledbar.dtb`와 `smartfan-ledbar` 항목을 준비했고 기존
+encoder/Stage2/Stage1 항목을 보존한다. LED와 겹치는 SPI1만 비활성화하며
+SPI0/UART/내장 fan state 보존 검사도 통과했다. 실제 `/boot` 설치는 아직 전이다.
+[지금 LED Bar 실행할 순서](ledbar-run.md). 아래는 Encoder 진단 시점 기록이다.
+
+**Encoder 핀 변경 적용 확인:** 기존 물리7/PAC.06(offset144), 31/PQ.06(offset106)에서
+물리12/PH.07(offset50), 38/PI.01(offset52)로 옮긴 별도 DTB와
+`smartfan-encoder-alt` 부팅 항목을 오프라인 생성했다. 기존 `smartfan-speed` DTB와
+부팅 항목은 복구용으로 보존한다. 현재 live DT도 PH7/PI1 및 입력 속성1/1/0/0을
+가리키고 smartfan driver가 bind되어 있다. 사용자는 새 핀에서도 무응답을 보고했다.
+독립 진단에서 GPIO50/52 IRQ 등록을 확인했다. 1초 agent 시험은 A/B=1/1,
+samples934, event0이었지만 사용자 회전과 동기화한 시험이 아니므로 원인 확정
+자료로 사용하지 않는다. `encoder-diagnose`의20초 sudo 회전 시험으로 실제
+pinconf·debounce·raw sample·IRQ·event를 동시에 수집한다.
+[최신 조사 결과와 실행 명령](encoder-audit.md).
+
+**사용자 보고: 1단계 완료 및 commit `e2da01d` 완료. 현재 2단계 설치 완료, Encoder 실물 무응답 조사 중.**
+
+| 항목 | 현재 상태 |
 |---|---|
-| Board/OS/L4T/Kernel/headers/toolchain 조사 | 확인 |
-| GPIO/PWM/I²C controller와 기존 DT 상태 | 읽기 전용 확인; pad 전압/파형은 미확인 |
-| Repository/수업 참고자료 | 확인; 기존 파일 변경 없음 |
-| Architecture/Build | Driver/CLI/DT 구현, 교차 검토 및 native Build 성공 |
-| Motor/L298N 전원 적합성 | 미확인 |
-| GPIO 입력 적합성 및 초기 OFF 회로 | 실측 미검증 |
-| 실물 pinout/전체 배선 | 미확정; hardware.md 표는 후보 |
-| Driver/CLI 구현 및 Build | 완료; module vermagic 실행 Kernel과 일치 |
-| CLI software test | dry-run integration9개 통과 |
-| Hardware Test | 사용자 GPIO 제어 motor 회전 확인; 종료/만료/재적재 검증 대기 |
-| Module load/출력/I²C probe/boot 변경/reboot | 미수행 |
-| Git add/commit/push | 미수행; 사용자가 수행 |
+| 1단계 ON/OFF | 사용자 완료 보고; GPIO 모터 회전 확인 |
+| Stage2 Driver | PWM1·5단계·startup boost·기존 정지 정책 구현 |
+| Encoder | GPIO v2 두 edge·2ms per-line debounce·Gray decoding·방향 반전 구현 |
+| CLI | speed/up/down, optional encoder, hardware 없는 회전 simulation 구현 |
+| Software test | encoder C unit 및 CLI integration 13개 통과 |
+| Build / offline DT | native app/module/overlay 및 Stage2 boot proposal 검증 |
+| Stage2 실물 | 새 입력 DT/PWM 적용 확인; 사용자는 핀 변경 후에도 회전 무응답 보고. 동시 raw/IRQ/event 기록 대기 |
+| PWM 부하 적합성 | 사진의 M7 flyback diode recovery 규격 및 모터 전류/발열 미확인 |
+| 시스템 변경 / Git | 사용자가 Stage2 설치·load·reboot 수행. 에이전트는 Git staging/commit/push 미수행 |
+
+사용자 Stage2 입력 점검(2026-10-08): live DT `pwm-names=motor`, module/device 존재.
+Encoder monitor는 gpiochip0 offsets144/106을 입력으로 요청했으나 raw level은 1/0 고정,
+50회 polling 동안 변화 없음, monitor 종료 시 `events=0`/invalid=0.
+Pinmux PAC6/PQ6 모두 tristate=1, enable-input=1, gpio-mode=0; gpioinfo는 PAC.06/PQ.06 input/unused.
+이는 GPIO edge decoding보다 앞 단계에서 신호가 도달하지 않는 상태를 가리킨다.
+추가 진단: 탈착 시 두 GPIO의 edge를 수신했으나 축 회전에는 반응하지 않았다. 참고 kernel 5.15.185 Tegra GPIO 구현은 debounce 비트가 line 해제 후 유지될 수 있어, debounce 속성 생략을 해제로 해석하지 않는다. 진단 monitor는 기간 0을 명시적으로 요청하고 IRQ 없는 1 ms level polling 옵션을 추가했다. 5.15.199-tegra에서 두 요청과 초기 level 읽기는 성공했으며, 실물 회전 중 결과는 사용자 실행 대기다.
+사용자는 멀티미터 점검이 정상이라고 보고했다. 측정 위치·Jetson 연결 여부별 수치는
+제공되지 않아 부하가 연결된 header 입력 전압/파형은 별도 미확인이다. 원인은 확정되지 않았다.
+prepare-dt 재실행 overlay 누적/installer 기존파일 거부 문제는 fallback 기반 idempotent 생성으로 수정했다.
+기존 `smartfan-speed` 구성은 복구용으로 보존돼 있다. 새 `smartfan-encoder-alt`
+설치·live DT 적용·prepared/installed DTB 일치를 확인했다. 추가 재부팅은 필요 없다.
+
+[지금 실행할 순서](stage2-run.md). 아래 기록은 각 시점의 관찰을 보존한 이력이다.
+
+## 이전 조사 및 1단계 이력
 
 추가 사진 검토: `20261008_102440.jpg`, `20261008_102501.jpg` 확인.
 LCD1602A/I²C backpack 및 Encoder 신호 label, Motor R300 2선 구조를 확인하고
@@ -134,47 +192,11 @@ Pad 수정안의 installer preflight를 다시 검증했다. sudo password 요�
 
 ## 현재 문제 / 다음 작업
 
-1. 모터 라벨·모듈 앞뒷면·전원 정격·현재 배선을 확인한다.
-2. L298N 입력 High/Low를 검증하고 직접 연결 가능 여부와 초기 OFF 회로를 확정한다. 추가 buffer 확보를 필수 전제로 두지 않는다.
-3. Pinmux는 root-only debugfs 상태와 공식 pin 설정으로 추가 확인한다. 비밀번호는 전달받지 않는다.
-4. 모터 기동/정상 전류, L298 전압 강하/발열, 회생·플라이백 경로 및 전원 용량을 확인한다.
-5. 정확한 Breadboard 연결표를 확정하고 0단계 결과를 보고한다.
-6. 사용자 확인 후 1단계 소스/Makefile/DT/CLI를 구현하고 build한다.
-
-## 사용자 실물 확인
-
-**[내가 할 작업]**
-
-1. 현재 배선 상태를 먼저 기록하고, 추가 배선/전원 인가 없이 부품 표시를 확인한다.
-2. 모터 라벨·연결 단자, L298N 앞뒷면·점퍼·터미널 표시, 전원 공급장치 출력 표기를 전달한다.
-3. Encoder, LCD backpack chip, BMP180 모듈, LED BAR와 저항 network의 표시/방향을 확인한다.
-4. 멀티미터 보유 여부와 현재 Header 연결 내역을 알려준다.
-
-**[정상 결과]**
-
-- 정확한 부품 모델/전압/단자/전원 정보가 확인된다. 이번 단계에서 모터 동작은 정상 결과에 포함하지 않는다.
-
-**[문제가 있을 경우]**
-
-- 표시가 없거나 회로가 불명확하면 사진 또는 구입 링크/교수님 부품 자료로 식별한다.
-- 공급 전류나 모터 정격을 모르면 안전한 구동 검증이 끝날 때까지 전원을 인가하지 않는다.
-
-## 1단계 검증 계획 (아직 실행하지 않음)
-
-| 시험 | 확인할 동작 |
-|---|---|
-| Build | CLI warning 및 Kbuild/module ABI; compile 성공과 load 성공 구분 |
-| 모터 분리 초기 검사 | load/probe/open/close/오류에서 EN OFF 실제 전압 |
-| OFF/ON 반복 | 방향 고정, EN 전이, 공급 전류/모터 단자 전압/발열 |
-| 종료/SIGTERM/SIGKILL | 마지막 fd close 정지, 재연결 시 OFF |
-| heartbeat 중단/SIGSTOP | lease 만료 정지 및 최대 ON 제한 |
-| 두 번째 controller | EBUSY, 기존 상태 손상 없음 |
-| Module load/unload | open 시 unload 거부, OFF 후 정상 unload |
-| platform remove/probe 실패 | OFF와 resource cleanup, stale fd 접근 거부 |
-| SSH disconnect | CLI 생존 여부 포함하여 정지시간 실제 확인 |
-
-실행 명령과 정상 Terminal 출력을 구현 완료 후 실제 CLI에 맞춰 작성한다.
-Hardware 결과는 사용자의 관찰/측정 근거가 있을 때만 성공으로 기록한다.
+1. 모터 전원을 분리하고 Stage2 DT 설치·재부팅.
+2. 새 module load 후 `encoder-monitor`로 방향/연속 회전 입력 확인.
+3. 모터 분리 상태에서 PWM 출력과 OFF/timeout 처리 확인.
+4. 실제 PWM 부하 적합성을 확인한 뒤 모터 풍속·최소 기동 duty·전류/발열 검증.
+5. 사용자 Stage2 정상 동작 확인 후 LCD 단계로 진행. 현재는 3단계를 구현하지 않는다.
 
 ## 이틀 일정
 
@@ -183,4 +205,4 @@ Hardware 결과는 사용자의 관찰/측정 근거가 있을 때만 성공으�
 - LED BAR는 현재 LED+저항 array 회로의 실제 표시 성능을 확인해 결정. Multi-process/thread는 실제 필요와 남은 시간에 따라 선택.
 - 안정 버전 확보 후 신규 기능 중단 시점을 정한다. 실제 시작/발표 날짜는 아직 사용자와 확정하지 않았다.
 
-현재 추천 Commit Message: `docs: record stage 0 environment and hardware constraints`
+현재 추천 Commit Message: `feat: add rotary encoder and PWM speed control`

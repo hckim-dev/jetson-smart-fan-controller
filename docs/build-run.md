@@ -1,5 +1,7 @@
 # Build 및 실행
 
+**현재 2단계 명령은 [stage2-run.md](stage2-run.md)를 따른다. 아래는 1단계 실행 이력 및 일반 Build 설명이다.**
+
 이번 작업은 Driver, CLI, DT overlay를 작성하고 compile하는 범위다.
 Module load, GPIO 출력, DT 설치, Pinmux 변경, reboot는 수행하지 않는다.
 Build 성공과 실제 전압·모터 동작 검증은 별개다.

@@ -19,10 +19,22 @@ DT_HEADERS := $(KDIR)/include/dt-bindings/gpio/tegra234-gpio.h \
 .PHONY: all app module dt prepare-dt test clean
 all: app module dt
 
-app: $(APP)
+app: $(APP) $(BUILD_DIR)/encoder-monitor $(BUILD_DIR)/encoder-diagnose
 
-$(APP): app/fanctl.c include/smartfan_uapi.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
+$(APP): app/fanctl.c app/encoder.c app/encoder.h app/lcd.c app/lcd.h include/smartfan_uapi.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -pthread -o $@ app/fanctl.c app/encoder.c app/lcd.c $(LDLIBS)
+
+$(BUILD_DIR)/encoder-monitor: app/encoder-monitor.c app/encoder.c app/encoder.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/encoder-monitor.c app/encoder.c $(LDLIBS)
+
+$(BUILD_DIR)/encoder-diagnose: app/encoder-diagnose.c app/encoder.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/encoder-diagnose.c $(LDLIBS)
+
+$(BUILD_DIR)/test_encoder: tests/test_encoder.c app/encoder.c app/encoder.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -o $@ tests/test_encoder.c app/encoder.c $(LDLIBS)
+
+$(BUILD_DIR)/test_lcd: tests/test_lcd.c app/lcd.c app/lcd.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd.c app/lcd.c $(LDLIBS)
 
 module:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" modules
@@ -42,7 +54,9 @@ $(DT_OVERLAY): $(DT_PREPROCESSED)
 $(BUILD_DIR):
 	mkdir -p $@
 
-test: app
+test: app $(BUILD_DIR)/test_encoder $(BUILD_DIR)/test_lcd
+	./$(BUILD_DIR)/test_encoder
+	./$(BUILD_DIR)/test_lcd
 	$(PYTHON) tests/test_fanctl.py
 
 clean:

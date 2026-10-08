@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the reviewed stage-1 boot proposal. No module load, GPIO or reboot.
+# Install a reviewed boot proposal. No module load, GPIO or reboot.
 set -euo pipefail
 
 task_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -44,12 +44,23 @@ task_dtb=$(awk '/^Proposed FDT: / {print $3}' "$task_record")
 task_label=$(awk '/^Proposed default: / {print $3}' "$task_record")
 if [[ -z "$task_label" ]]; then task_label=smartfan; fi
 case "$task_dtb:$task_label" in
-  /boot/dtb/smartfan-stage1.dtb:smartfan|/boot/dtb/smartfan-stage1-output.dtb:smartfan-output) ;;
+  /boot/dtb/smartfan-stage1.dtb:smartfan|/boot/dtb/smartfan-stage1-output.dtb:smartfan-output|/boot/dtb/smartfan-stage2.dtb:smartfan-speed|/boot/dtb/smartfan-stage2-encoder-alt.dtb:smartfan-encoder-alt|/boot/dtb/smartfan-ledbar.dtb:smartfan-ledbar|/boot/dtb/smartfan-lcd.dtb:smartfan-lcd) ;;
   *) echo 'Unexpected managed DTB path or boot label.' >&2; exit 1 ;;
 esac
 if [[ -L "$task_dtb" ]]; then
   echo 'Refusing to replace a symlink at the proposed DTB path.' >&2
   exit 1
+fi
+if [[ "$task_label" == smartfan-speed || "$task_label" == smartfan-encoder-alt || "$task_label" == smartfan-ledbar || "$task_label" == smartfan-lcd ]]; then
+  task_dtb_hash=$(awk '/^Prepared DTB SHA256: / {print $4}' "$task_record")
+  task_proposal_hash=$(awk '/^Prepared config SHA256: / {print $4}' "$task_record")
+  if [[ ! "$task_dtb_hash" =~ ^[a-f0-9]{64}$ ||
+    ! "$task_proposal_hash" =~ ^[a-f0-9]{64}$ ||
+    "$task_dtb_hash" != "$(sha256sum -- "$task_dtb_proposal" | awk '{print $1}')" ||
+    "$task_proposal_hash" != "$(sha256sum -- "$task_cfg_proposal" | awk '{print $1}')" ]]; then
+    echo 'Prepared DTB or config changed since review. Nothing installed.' >&2
+    exit 1
+  fi
 fi
 if cmp -s -- "$task_cfg_proposal" "$task_cfg"; then
   if [[ -f "$task_dtb" ]] && cmp -s -- "$task_dtb_proposal" "$task_dtb"; then
@@ -67,7 +78,7 @@ if [[ ! "$task_expected_hash" =~ ^[a-f0-9]{64}$ || "$task_expected_hash" != "$ta
   exit 1
 fi
 if [[ -e "$task_dtb" ]] && ! cmp -s -- "$task_dtb_proposal" "$task_dtb"; then
-  echo 'Different smartfan-stage1.dtb already exists; refusing to overwrite.' >&2
+  printf 'Different DTB already exists at %s; refusing to overwrite.\n' "$task_dtb" >&2
   exit 1
 fi
 task_compatible=$(fdtget -t s "$task_dtb_proposal" /smartfan compatible)
@@ -80,6 +91,41 @@ if ! grep -qx "DEFAULT $task_label" "$task_cfg_proposal" ||
   ! grep -qx 'LABEL JetsonIO' "$task_cfg_proposal"; then
   echo 'Boot proposal lacks the reviewed default or original fallback entry.' >&2
   exit 1
+fi
+if [[ "$task_label" == smartfan-speed || "$task_label" == smartfan-encoder-alt || "$task_label" == smartfan-ledbar || "$task_label" == smartfan-lcd ]]; then
+  task_pwm=$(fdtget -t s "$task_dtb_proposal" /smartfan pwm-names)
+  if [[ "$task_pwm" != motor ]] ||
+    fdtget -p "$task_dtb_proposal" /smartfan | grep -qx 'in1-gpios'; then
+    echo 'Stage-2 DTB lacks motor PWM or retains legacy IN1 GPIO.' >&2
+    exit 1
+  fi
+  if ! grep -qx 'LABEL smartfan-output' "$task_cfg_proposal" ||
+    ! grep -qx 'LABEL smartfan' "$task_cfg_proposal"; then
+    echo 'Stage-1 boot fallbacks must remain available.' >&2
+    exit 1
+  fi
+  if [[ "$task_label" == smartfan-encoder-alt ]]; then
+    if ! grep -qx 'LABEL smartfan-speed' "$task_cfg_proposal" ||
+      [[ "$(fdtget -t s "$task_dtb_proposal" /bus@0/pinmux@2430000/smartfan-output/encoder-inputs nvidia,pins)" != 'soc_gpio41_ph7 soc_gpio43_pi1' ]]; then
+      echo 'Alternate encoder DTB or original stage-2 fallback is missing.' >&2
+      exit 1
+    fi
+  fi
+  if [[ "$task_label" == smartfan-ledbar || "$task_label" == smartfan-lcd ]]; then
+    if ! grep -qx 'LABEL smartfan-encoder-alt' "$task_cfg_proposal" ||
+      [[ "$(fdtget -t s "$task_dtb_proposal" /bus@0/spi@3230000 status)" != disabled ]] ||
+      [[ "$(fdtget -t x "$task_dtb_proposal" /bus@0/pinmux@2430000/smartfan-output/led-outputs nvidia,tristate)" != 0 ]]; then
+      echo 'LED DTB or original encoder boot fallback is missing.' >&2
+      exit 1
+    fi
+  fi
+  if [[ "$task_label" == smartfan-lcd ]]; then
+    if ! grep -qx 'LABEL smartfan-ledbar' "$task_cfg_proposal" ||
+      [[ "$(fdtget -t x "$task_dtb_proposal" /bus@0/i2c@c250000 clock-frequency)" != 186a0 ]]; then
+      echo 'LCD I2C must be 100kHz and LED Bar fallback must remain.' >&2
+      exit 1
+    fi
+  fi
 fi
 
 if [[ "$task_check_only" -eq 1 ]]; then
@@ -94,7 +140,7 @@ if [[ -e "$task_backup" ]]; then
   exit 1
 fi
 cp -a -- "$task_cfg" "$task_backup"
-task_tmp_dtb=$(mktemp /boot/dtb/.smartfan-stage1.XXXXXX)
+task_tmp_dtb=$(mktemp /boot/dtb/.smartfan-dtb.XXXXXX)
 task_tmp_cfg=$(mktemp /boot/extlinux/.smartfan-config.XXXXXX)
 install -m 0644 -- "$task_dtb_proposal" "$task_tmp_dtb"
 install -m 0644 -- "$task_cfg_proposal" "$task_tmp_cfg"
