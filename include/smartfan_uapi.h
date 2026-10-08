@@ -13,9 +13,12 @@
 #define SMARTFAN_DEFAULT_BOOST_MS 200U
 #define SMARTFAN_CAP_PWM 1U
 #define SMARTFAN_CAP_LED_BAR 2U
+#define SMARTFAN_CAP_AUTO 4U
+#define SMARTFAN_AUTO_MAX_AGE_MS 3000U
 #define SMARTFAN_LED_SEGMENTS 8U
 
-enum smartfan_led_mode {
+enum smartfan_led_mode
+{
 	SMARTFAN_LED_AUTO = 0,
 	SMARTFAN_LED_TEST = 1,
 };
@@ -29,6 +32,8 @@ enum smartfan_stop_reason
 	SMARTFAN_STOP_MAX_ON = 4,
 	SMARTFAN_STOP_REMOVE = 5,
 	SMARTFAN_STOP_PWM_ERROR = 6,
+	SMARTFAN_STOP_SUSPEND = 7,
+	SMARTFAN_STOP_SENSOR = 8,
 };
 
 struct smartfan_request
@@ -55,13 +60,15 @@ struct smartfan_status
 #define SMARTFAN_IOC_GET _IOR('F', 3, struct smartfan_status)
 
 /* Additive ABI: the stage-1 SET/GET structures and commands stay unchanged. */
-struct smartfan_speed_request {
+struct smartfan_speed_request
+{
 	__u32 abi_version;
 	__u32 level;
 	__u32 reserved[2];
 };
 
-struct smartfan_speed_status {
+struct smartfan_speed_status
+{
 	__u32 abi_version;
 	__u32 level;
 	__u32 max_level;
@@ -75,14 +82,16 @@ struct smartfan_speed_status {
 #define SMARTFAN_IOC_SET_SPEED _IOW('F', 4, struct smartfan_speed_request)
 #define SMARTFAN_IOC_GET_SPEED _IOR('F', 5, struct smartfan_speed_status)
 
-struct smartfan_led_request {
+struct smartfan_led_request
+{
 	__u32 abi_version;
 	__u32 mode;
 	__u32 count;
 	__u32 reserved;
 };
 
-struct smartfan_led_status {
+struct smartfan_led_status
+{
 	__u32 abi_version;
 	__u32 mode;
 	__u32 count;
@@ -92,11 +101,31 @@ struct smartfan_led_status {
 #define SMARTFAN_IOC_SET_LEDS _IOW('F', 6, struct smartfan_led_request)
 #define SMARTFAN_IOC_GET_LEDS _IOR('F', 7, struct smartfan_led_status)
 
+/* Atomic AUTO update. Only an explicit operator ON sets rearm=1. */
+struct smartfan_auto_request {
+	__u32 abi_version;
+	__u32 level;
+	__u32 rearm;
+	__u32 reserved;
+	__u64 sample_boottime_ms;
+};
+#define SMARTFAN_IOC_SET_AUTO _IOW('F', 8, struct smartfan_auto_request)
+
+static inline int smartfan_auto_sample_fresh(__u64 now, __u64 sample)
+{
+	return now >= sample && now - sample < SMARTFAN_AUTO_MAX_AGE_MS;
+}
+
+static inline int smartfan_auto_rearm_allowed(int inhibited, __u32 explicit_rearm)
+{
+	return !inhibited || explicit_rearm == 1U;
+}
+
 /* Fill from segment 1: levels 0..5 -> 0,2,4,5,7,8 segments. */
 static inline __u32 smartfan_level_leds(__u32 level)
 {
 	return (level * SMARTFAN_LED_SEGMENTS + SMARTFAN_MAX_SPEED_LEVEL - 1U) /
-		SMARTFAN_MAX_SPEED_LEVEL;
+		   SMARTFAN_MAX_SPEED_LEVEL;
 }
 
 /* Duty targets for levels 0..5; calibration requires a motor test. */

@@ -4,6 +4,8 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <limits.h>
+#include <math.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -18,6 +20,7 @@
 #include "smartfan_uapi.h"
 #include "encoder.h"
 #include "lcd.h"
+#include "sensor.h"
 
 struct backend
 {
@@ -33,6 +36,11 @@ struct backend
     bool led_test;
     uint32_t led_count;
     struct lcd_display *lcd;
+    struct sensor_reader sensor;
+    struct sensor_sample sample;
+    bool sensor_enabled, have_sample, auto_mode, auto_armed;
+    bool auto_rearm_pending, auto_inhibited;
+    unsigned int auto_target;
 };
 
 static volatile sig_atomic_t received_signal;
@@ -41,12 +49,38 @@ static int wake_write_fd = -1;
 static uint64_t now_ms(void)
 {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+    if (clock_gettime(CLOCK_BOOTTIME, &ts) < 0)
     {
         perror("clock_gettime");
         exit(EXIT_FAILURE);
     }
     return (uint64_t)ts.tv_sec * 1000U + (uint64_t)ts.tv_nsec / 1000000U;
+}
+
+static bool sensor_fresh(const struct backend *backend)
+{
+    uint64_t now = now_ms();
+    return backend->have_sample && !backend->sample.error &&
+           now >= backend->sample.timestamp_ms &&
+           now - backend->sample.timestamp_ms < SENSOR_MAX_AGE_MS;
+}
+
+static void print_environment(const struct backend *backend)
+{
+    printf("MODE %s armed=%u target=%u\n", backend->auto_mode ? "AUTO" : "MANUAL",
+           backend->auto_armed, backend->auto_target);
+    if (!backend->sensor_enabled)
+        return;
+    if (!backend->have_sample)
+        puts("SENSOR pending");
+    else if (backend->sample.error)
+        printf("SENSOR error=%s\n", strerror(backend->sample.error));
+    else if (!sensor_fresh(backend))
+        puts("SENSOR stale");
+    else
+        printf("SENSOR temperature=%.1fC pressure=%.2fhPa age_ms=%" PRIu64 "\n",
+               backend->sample.temperature_mc / 1000.0, backend->sample.pressure_pa / 100.0,
+               now_ms() - backend->sample.timestamp_ms);
 }
 
 static void handle_signal(int signo)
@@ -80,6 +114,10 @@ static const char *reason_name(uint32_t reason)
         return "pwm_error";
     case SMARTFAN_STOP_REMOVE:
         return "remove";
+    case SMARTFAN_STOP_SUSPEND:
+        return "suspend";
+    case SMARTFAN_STOP_SENSOR:
+        return "sensor";
     default:
         return "unknown";
     }
@@ -100,7 +138,10 @@ static void dry_expire(struct backend *backend, uint64_t now)
         backend->state.stop_reason = SMARTFAN_STOP_LEASE;
     }
     if (!backend->state.running)
+    {
         backend->led_test = false;
+        backend->auto_inhibited = true;
+    }
 }
 
 static int backend_get(struct backend *backend, struct smartfan_status *state)
@@ -150,9 +191,11 @@ static int backend_set(struct backend *backend, bool enabled)
                 backend->level = backend->last_nonzero;
             backend->on_deadline = now + backend->state.max_on_ms;
             backend->boost_deadline = backend->level < SMARTFAN_MAX_SPEED_LEVEL
-                ? now + SMARTFAN_DEFAULT_BOOST_MS : 0;
+                                          ? now + SMARTFAN_DEFAULT_BOOST_MS
+                                          : 0;
         }
         backend->state.running = 1;
+        backend->auto_inhibited = false;
         backend->lease_deadline = now + backend->state.lease_ms;
     }
     return 0;
@@ -206,20 +249,21 @@ static int backend_get_speed(struct backend *backend, struct smartfan_speed_stat
     speed->max_level = SMARTFAN_MAX_SPEED_LEVEL;
     if (backend->dry_run)
     {
-        speed->capabilities = SMARTFAN_CAP_PWM | SMARTFAN_CAP_LED_BAR;
+        speed->capabilities = SMARTFAN_CAP_PWM | SMARTFAN_CAP_LED_BAR | SMARTFAN_CAP_AUTO;
         speed->period_ns = SMARTFAN_DEFAULT_PWM_PERIOD_NS;
         if (state.running && now < backend->boost_deadline)
             speed->boost_remaining_ms = (uint32_t)(backend->boost_deadline - now);
     }
-    speed->duty_percent = !state.running ? 0 : speed->boost_remaining_ms ? 100 :
-        smartfan_level_duty(backend->level);
+    speed->duty_percent = !state.running ? 0 : speed->boost_remaining_ms ? 100
+                                                                         : smartfan_level_duty(backend->level);
     return 0;
 }
 
 static int backend_set_speed(struct backend *backend, uint32_t level)
 {
     struct smartfan_speed_request request = {
-        .abi_version = SMARTFAN_ABI_VERSION, .level = level,
+        .abi_version = SMARTFAN_ABI_VERSION,
+        .level = level,
     };
     if (!backend->dry_run)
     {
@@ -266,8 +310,8 @@ static int backend_get_leds(struct backend *backend, struct smartfan_led_status 
     leds->abi_version = SMARTFAN_ABI_VERSION;
     leds->available = 1;
     leds->mode = backend->led_test ? SMARTFAN_LED_TEST : SMARTFAN_LED_AUTO;
-    leds->count = backend->led_test ? backend->led_count :
-        backend->state.running ? smartfan_level_leds(backend->level) : 0;
+    leds->count = backend->led_test ? backend->led_count : backend->state.running ? smartfan_level_leds(backend->level)
+                                                                                  : 0;
     return 0;
 }
 
@@ -275,7 +319,8 @@ static int backend_set_leds(struct backend *backend, bool test, uint32_t count)
 {
     struct smartfan_led_request request = {
         .abi_version = SMARTFAN_ABI_VERSION,
-        .mode = test ? SMARTFAN_LED_TEST : SMARTFAN_LED_AUTO, .count = count,
+        .mode = test ? SMARTFAN_LED_TEST : SMARTFAN_LED_AUTO,
+        .count = count,
     };
     if (!backend->dry_run)
         return ioctl(backend->fd, SMARTFAN_IOC_SET_LEDS, &request);
@@ -305,15 +350,106 @@ static int print_speed(struct backend *backend)
         return -1;
     printf("LEDBAR available=%u mode=%s count=%u/8\n", (unsigned int)leds.available,
            leds.mode == SMARTFAN_LED_TEST ? "test" : "auto", (unsigned int)leds.count);
+    print_environment(backend);
     if (backend->lcd)
     {
         struct smartfan_status state;
         if (backend_get(backend, &state) < 0)
             return -1;
-        lcd_publish(backend->lcd, state.running != 0, speed.level,
-                    !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count);
+        lcd_publish_environment(backend->lcd, state.running != 0, speed.level,
+                                !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count,
+                                backend->auto_mode, backend->sensor_enabled, sensor_fresh(backend),
+                                backend->sample.temperature_mc);
     }
     return 0;
+}
+
+static int backend_auto_update(struct backend *backend, uint32_t level, bool rearm)
+{
+    struct smartfan_auto_request request = {
+        .abi_version = SMARTFAN_ABI_VERSION,
+        .level = level,
+        .rearm = rearm,
+        .sample_boottime_ms = backend->sample.timestamp_ms,
+    };
+    if (!backend->dry_run)
+        return ioctl(backend->fd, SMARTFAN_IOC_SET_AUTO, &request);
+    uint64_t now = now_ms();
+    dry_expire(backend, now);
+    if (!smartfan_auto_sample_fresh(now, request.sample_boottime_ms))
+    {
+        backend_set(backend, false);
+        backend->auto_inhibited = true;
+        errno = ESTALE;
+        return -1;
+    }
+    if (!smartfan_auto_rearm_allowed(backend->auto_inhibited, request.rearm))
+    {
+        errno = ECANCELED;
+        return -1;
+    }
+    backend->auto_inhibited = false;
+    if (backend_set_speed(backend, level) < 0)
+        return -1;
+    return level ? backend_set(backend, true) : 0;
+}
+
+/* Kernel validates AUTO inhibition and sample freshness atomically with output. */
+static int auto_tick(struct backend *backend)
+{
+    if (!backend->auto_mode)
+        return 0;
+    if (!sensor_fresh(backend))
+    {
+        if (backend->auto_armed)
+        {
+            backend->auto_armed = false;
+            backend->auto_rearm_pending = false;
+            if (backend_set(backend, false) < 0)
+                return -1;
+            puts("AUTO STOP reason=sensor_fault_or_stale; explicit ON required");
+            return print_speed(backend);
+        }
+        return 0;
+    }
+    struct smartfan_status state;
+    struct smartfan_speed_status speed;
+    if (backend_get(backend, &state) < 0 || backend_get_speed(backend, &speed) < 0)
+        return -1;
+    if (backend->auto_armed && !backend->auto_rearm_pending && !state.running &&
+        (state.stop_reason == SMARTFAN_STOP_MAX_ON || state.stop_reason == SMARTFAN_STOP_LEASE ||
+         state.stop_reason == SMARTFAN_STOP_PWM_ERROR || state.stop_reason == SMARTFAN_STOP_SUSPEND ||
+         state.stop_reason == SMARTFAN_STOP_SENSOR))
+    {
+        backend->auto_armed = false;
+        puts("AUTO STOP reason=driver_limit; explicit ON required");
+        return 0;
+    }
+    backend->auto_target = auto_temperature_level(backend->auto_target, backend->sample.temperature_mc);
+    bool changed = speed.level != backend->auto_target;
+    if (backend->auto_armed && (changed || (backend->auto_target && !state.running) || backend->auto_rearm_pending))
+    {
+        bool rearm = backend->auto_rearm_pending;
+        backend->auto_rearm_pending = false;
+        if (backend_auto_update(backend, backend->auto_target, rearm) < 0)
+        {
+            if (errno == ECANCELED || errno == ESTALE || errno == EHOSTDOWN)
+            {
+                backend->auto_armed = false;
+                puts("AUTO STOP reason=atomic_guard; explicit ON required");
+                return 0;
+            }
+            return -1;
+        }
+        if (backend->auto_target && !state.running)
+        {
+            puts("AUTO RUN: fresh temperature requested a nonzero level");
+            changed = true;
+        }
+    }
+    else if (!backend->auto_armed && changed && backend_set_speed(backend, backend->auto_target) < 0)
+        return -1;
+    return changed ? print_speed(backend) : 0;
 }
 
 static int change_level(struct backend *backend, int delta)
@@ -346,6 +482,8 @@ static void usage(FILE *out, const char *program)
                  "Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, heartbeat, help, quit\n"
                  "       [--encoder [--encoder-chip PATH] [--reverse-encoder]]\n"
                  "       [--lcd --lcd-address 0x27 [--lcd-bus /dev/i2c-7]]\n"
+                 "       [--bmp180 [--sensor-bus /dev/i2c-7]]\n"
+                 "Sensor commands: mode manual, mode auto; temp N/error (dry-run only).\n"
                  "Dry-run encoder simulation: cw, ccw (requires --encoder).\n"
                  "Keep this foreground process open while the fan is ON.\n",
             program);
@@ -385,18 +523,79 @@ static int command(struct backend *backend, char *line, bool *known_running,
         return 1;
     if (!strcmp(line, "help"))
     {
-        puts("Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, heartbeat, help, quit");
+        puts("Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, mode manual, mode auto, heartbeat, help, quit\nDry-run sensor: temp N, temp error");
         return 0;
     }
-    if (!strcmp(line, "on"))
+    if (!strcmp(line, "mode auto") || !strcmp(line, "mode manual"))
+    {
+        bool automatic = !strcmp(line, "mode auto");
+        struct smartfan_speed_status speed;
+        if (automatic && (!backend->sensor_enabled ||
+                          backend_get_speed(backend, &speed) < 0 || !(speed.capabilities & SMARTFAN_CAP_AUTO)))
+        {
+            fputs("ERR AUTO requires --bmp180 and an updated atomic-AUTO driver\n", stderr);
+            return 0;
+        }
+        if (backend_set(backend, false) < 0)
+            return -1;
+        backend->auto_mode = automatic;
+        backend->auto_armed = false;
+        backend->auto_rearm_pending = false;
+        backend->auto_target = 0;
+    }
+    else if (!strncmp(line, "temp ", 5))
+    {
+        if (!backend->dry_run || !backend->sensor_enabled)
+        {
+            fputs("ERR temp injection requires --dry-run --bmp180\n", stderr);
+            return 0;
+        }
+        int32_t temperature = 0;
+        bool fault = !strcmp(line + 5, "error");
+        if (!fault)
+        {
+            char *end;
+            errno = 0;
+            double value = strtod(line + 5, &end);
+            if (errno || end == line + 5 || *end || !isfinite(value) || value < -40 || value > 85)
+            {
+                fputs("ERR temp must be -40..85 Celsius or error\n", stderr);
+                return 0;
+            }
+            temperature = (int32_t)(value * 1000 + (value >= 0 ? 0.5 : -0.5));
+        }
+        backend->sample = (struct sensor_sample){.magic = SENSOR_MAGIC, .sequence = 1, .error = fault ? EIO : 0, .temperature_mc = temperature, .pressure_pa = 101325, .timestamp_ms = now_ms()};
+        backend->have_sample = true;
+    }
+    else if (backend->auto_mode && (!strncmp(line, "speed ", 6) ||
+                                    !strcmp(line, "up") || !strcmp(line, "down") ||
+                                    (!strncmp(line, "led ", 4) && strcmp(line, "led auto")) ||
+                                    !strcmp(line, "cw") || !strcmp(line, "ccw")))
+    {
+        fputs("ERR manual speed/LED controls require mode manual\n", stderr);
+        return 0;
+    }
+    else if (!strcmp(line, "on"))
     {
         if (received_signal)
             return 1;
-        if (backend_set(backend, true) < 0)
+        if (backend->auto_mode)
+        {
+            if (!sensor_fresh(backend))
+            {
+                fputs("ERR AUTO ON requires a fresh valid sensor sample\n", stderr);
+                return 0;
+            }
+            backend->auto_armed = true;
+            backend->auto_rearm_pending = true;
+        }
+        else if (backend_set(backend, true) < 0)
             return -1;
     }
     else if (!strcmp(line, "off"))
     {
+        backend->auto_armed = false;
+        backend->auto_rearm_pending = false;
         if (backend_set(backend, false) < 0)
             return -1;
     }
@@ -453,7 +652,7 @@ static int command(struct backend *backend, char *line, bool *known_running,
         fprintf(stderr, "ERR unknown command: %s\n", line);
         return 0;
     }
-    if (backend_get(backend, &state) < 0)
+    if (auto_tick(backend) < 0 || backend_get(backend, &state) < 0)
         return -1;
     *known_running = state.running != 0;
     print_state(&state);
@@ -473,6 +672,8 @@ int main(int argc, char **argv)
         {"lcd", no_argument, NULL, 'L'},
         {"lcd-bus", required_argument, NULL, 'B'},
         {"lcd-address", required_argument, NULL, 'A'},
+        {"bmp180", no_argument, NULL, 'S'},
+        {"sensor-bus", required_argument, NULL, 'I'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -480,6 +681,8 @@ int main(int argc, char **argv)
         .fd = -1,
         .level = SMARTFAN_MAX_SPEED_LEVEL,
         .last_nonzero = SMARTFAN_MAX_SPEED_LEVEL,
+        .sensor = {.fd = -1},
+        .auto_inhibited = true,
         .state = {
             .abi_version = SMARTFAN_ABI_VERSION,
             .lease_ms = SMARTFAN_DEFAULT_LEASE_MS,
@@ -494,6 +697,8 @@ int main(int argc, char **argv)
     bool lcd_warned = false;
     const char *lcd_bus = "/dev/i2c-7";
     unsigned int lcd_address = 0x27;
+    const char *sensor_bus = "/dev/i2c-7";
+    bool sensor_bus_selected = false;
     const char *encoder_chip = NULL;
     struct sigaction action = {0};
     const char *device = "/dev/smartfan";
@@ -510,6 +715,8 @@ int main(int argc, char **argv)
     _Static_assert(sizeof(struct smartfan_status) == 32, "GET ABI size");
     _Static_assert(sizeof(struct smartfan_speed_request) == 16, "SET_SPEED ABI size");
     _Static_assert(sizeof(struct smartfan_speed_status) == 32, "GET_SPEED ABI size");
+    _Static_assert(sizeof(struct smartfan_auto_request) == 24, "SET_AUTO ABI size");
+    _Static_assert(SENSOR_MAX_AGE_MS == SMARTFAN_AUTO_MAX_AGE_MS, "sensor/kernel age policy");
     while ((option = getopt_long(argc, argv, "", options, NULL)) != -1)
     {
         switch (option)
@@ -531,19 +738,37 @@ int main(int argc, char **argv)
             if (parse_ms(optarg, 1000U, 120000U, &backend.state.max_on_ms))
                 goto invalid_options;
             break;
-        case 'e': encoder_enabled = true; break;
-        case 'c': encoder_chip = optarg; break;
-        case 'r': reverse_encoder = true; break;
-        case 'L': lcd_enabled = true; break;
-        case 'B': lcd_bus = optarg; lcd_bus_selected = true; break;
+        case 'e':
+            encoder_enabled = true;
+            break;
+        case 'c':
+            encoder_chip = optarg;
+            break;
+        case 'r':
+            reverse_encoder = true;
+            break;
+        case 'L':
+            lcd_enabled = true;
+            break;
+        case 'S':
+            backend.sensor_enabled = true;
+            break;
+        case 'I':
+            sensor_bus = optarg;
+            sensor_bus_selected = true;
+            break;
+        case 'B':
+            lcd_bus = optarg;
+            lcd_bus_selected = true;
+            break;
         case 'A':
         {
             char *end;
             errno = 0;
-            if (optarg[0] < '0' || optarg[0] > '9') goto invalid_options;
+            if (optarg[0] < '0' || optarg[0] > '9')
+                goto invalid_options;
             unsigned long address = strtoul(optarg, &end, 0);
-            if (errno || *end || !((address >= 0x20 && address <= 0x27) ||
-                                  (address >= 0x38 && address <= 0x3f)))
+            if (errno || *end || !((address >= 0x20 && address <= 0x27) || (address >= 0x38 && address <= 0x3f)))
                 goto invalid_options;
             lcd_address = (unsigned int)address;
             lcd_address_selected = true;
@@ -562,6 +787,8 @@ int main(int argc, char **argv)
         (!encoder_enabled && (encoder_chip || reverse_encoder)) ||
         (backend.dry_run && encoder_chip) ||
         (!lcd_enabled && (lcd_bus_selected || lcd_address_selected)) ||
+        (!backend.sensor_enabled && sensor_bus_selected) ||
+        (backend.sensor_enabled && (strlen(sensor_bus) >= 128 || !sensor_bus[0])) ||
         (lcd_enabled && (strlen(lcd_bus) >= 128 || !lcd_bus[0] ||
                          (!backend.dry_run && !lcd_address_selected))))
         goto invalid_options;
@@ -603,6 +830,34 @@ int main(int argc, char **argv)
         perror("get status");
         result = EXIT_FAILURE;
         goto cleanup;
+    }
+    if (backend.sensor_enabled && !backend.dry_run)
+    {
+        char program[PATH_MAX];
+        ssize_t length = readlink("/proc/self/exe", program, sizeof(program) - 1);
+        if (length < 0 || (size_t)length == sizeof(program) - 1)
+        {
+            perror("resolve sensor program");
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        program[length] = '\0';
+        char *slash = strrchr(program, '/');
+        const char *name = "bmp180-monitor";
+        if (!slash || (size_t)(slash + 1 - program) + strlen(name) >= sizeof(program))
+        {
+            fputs("ERR sensor program path too long\n", stderr);
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        strcpy(slash + 1, name);
+        if (sensor_start(&backend.sensor, program, sensor_bus) < 0)
+        {
+            perror("start sensor process");
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        printf("SENSOR_PROCESS pid=%ld bus=%s address=0x77\n", (long)backend.sensor.pid, sensor_bus);
     }
     if (lcd_enabled)
     {
@@ -652,12 +907,14 @@ int main(int argc, char **argv)
 
     while (!done && !received_signal)
     {
-        struct pollfd descriptors[3] = {
+        struct pollfd descriptors[4] = {
             {.fd = STDIN_FILENO, .events = POLLIN},
             {.fd = wake_pipe[0], .events = POLLIN},
             {.fd = encoder.fd, .events = POLLIN},
+            {.fd = backend.sensor.fd, .events = POLLIN},
         };
         uint64_t now = now_ms();
+        sensor_reap(&backend.sensor);
         if (backend_get(&backend, &state) < 0)
         {
             perror("get status");
@@ -668,6 +925,13 @@ int main(int argc, char **argv)
         if (known_running && !state.running)
             print_state(&state);
         known_running = state.running != 0;
+        if (auto_tick(&backend) < 0)
+        {
+            perror("AUTO control");
+            result = EXIT_FAILURE;
+            exit_reason = "error";
+            break;
+        }
         if (state.running && now >= next_heartbeat)
         {
             if (backend_heartbeat(&backend) < 0)
@@ -695,8 +959,10 @@ int main(int argc, char **argv)
                 exit_reason = "error";
                 break;
             }
-            lcd_publish(backend.lcd, state.running != 0, speed.level,
-                        !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count);
+            lcd_publish_environment(backend.lcd, state.running != 0, speed.level,
+                                    !state.running && leds.mode == SMARTFAN_LED_AUTO ? 0 : leds.count,
+                                    backend.auto_mode, backend.sensor_enabled, sensor_fresh(&backend),
+                                    backend.sample.temperature_mc);
             int error = lcd_error(backend.lcd);
             if (error && !lcd_warned)
             {
@@ -706,7 +972,7 @@ int main(int argc, char **argv)
                 lcd_warned = true;
             }
         }
-        int ready = poll(descriptors, 3, 50);
+        int ready = poll(descriptors, 4, 50);
         if (ready < 0)
         {
             if (errno == EINTR)
@@ -718,6 +984,36 @@ int main(int argc, char **argv)
         }
         if (received_signal || descriptors[1].revents)
             break;
+        if (descriptors[3].revents)
+        {
+            for (unsigned int batch = 0; batch < 8; ++batch)
+            {
+                struct sensor_sample sample;
+                int response = sensor_next(&backend.sensor, &sample, now_ms());
+                if (!response)
+                    break;
+                if (response < 0)
+                {
+                    if (errno != EPIPE || !backend.have_sample || !backend.sample.error)
+                        backend.sample.error = errno;
+                    backend.have_sample = true;
+                    close(backend.sensor.fd);
+                    backend.sensor.fd = -1;
+                    print_environment(&backend);
+                    break;
+                }
+                backend.sample = sample;
+                backend.have_sample = true;
+                print_environment(&backend);
+            }
+            if (auto_tick(&backend) < 0)
+            {
+                perror("AUTO sensor event");
+                result = EXIT_FAILURE;
+                exit_reason = "error";
+                break;
+            }
+        }
         if (descriptors[2].revents & (POLLERR | POLLHUP | POLLNVAL))
         {
             fputs("ERR encoder unavailable\n", stderr);
@@ -741,6 +1037,8 @@ int main(int argc, char **argv)
             /* Apply every detent in order: a net-zero batch can cross STOP. */
             for (unsigned int i = 0; i < encoder.num_steps && !received_signal; ++i)
             {
+                if (backend.auto_mode)
+                    continue;
                 if (change_level(&backend, encoder.steps[i]) < 0 || print_speed(&backend) < 0)
                 {
                     perror("encoder speed");
@@ -829,7 +1127,13 @@ cleanup:
     encoder_close(&encoder);
     if (backend.fd >= 0)
         close(backend.fd);
-    lcd_finish(backend.lcd);
+    sensor_stop(&backend.sensor);
+    int lcd_cleanup_error = lcd_finish(backend.lcd);
+    if (lcd_cleanup_error)
+    {
+        fprintf(stderr, "WARN LCD shutdown: %s; motor fd already closed\n", strerror(lcd_cleanup_error));
+        result = EXIT_FAILURE;
+    }
     /* Block our handlers before closing their write fd to avoid fd reuse races. */
     sigset_t block;
     sigemptyset(&block);

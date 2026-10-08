@@ -163,7 +163,8 @@ SPEED:5/5 LED:0
 `speed 2`는 OFF를 유지하면서 선택풍속2를 표시한다. `led 1`은 LED독립 시험의
 점등칸 수1을 표시한다. ON/OFF와풍속,자동정지/timeout도 약50ms 관찰 주기로
 반영한다. 선택풍속을 표시하므로 startup boost 중에도 선택단계는 바뀌지 않는다.
-AUTO 온도제어는 아직 미구현이므로 모드는MANUAL만 표시한다.
+현재는 [BMP180 / AUTO 구현](bmp180-run.md)도 포함한다. `--bmp180`을 켜면
+LCD 두 번째 행은 온도·풍속으로 바뀌며 `mode auto`에서AUTO 모드를 표시한다.
 
 ## 구현 및 제한
 
@@ -176,7 +177,8 @@ AUTO 온도제어는 아직 미구현이므로 모드는MANUAL만 표시한다.
   기다리지 않아 motor heartbeat를 막지 않는다. LCD 오류는 warning 후 표시를
   중단하고 motor 제어는 계속한다. 실패한 transaction을 부분 재전송하지 않는다.
 - 종료 시 motor를 먼저 정지/close한 뒤 LCD에 최종 OFF를 best-effort로 표시한다.
-  worker join은 I²C syscall이 끝나야 완료된다. SIGKILL/통신 오류 때는 LCD에
+  worker join은 최대2초 기다린다. 시간 초과 시 살아 있는 객체를 해제하지 않고
+  CLI가 오류로 종료한다. Kernel I²C 작업의 종료 시간은 별개다. SIGKILL/통신 오류 때는 LCD에
   이전 문자가 남을 수 있다. LCD를 물리적 motor 정지의 증거로 사용하지 않는다.
 - I2C_SLAVE_FORCE는 쓰지 않는다. 기본 bus의 live DT가 100kHz가 아니면 송수신
   전에 거부한다. [Linux i2c-dev API](https://www.kernel.org/doc/html/v5.15/i2c/dev-interface.html)

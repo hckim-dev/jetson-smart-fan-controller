@@ -4,6 +4,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/jiffies.h>
 #include <linux/kref.h>
+#include <linux/ktime.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -47,6 +48,7 @@ struct smartfan
 	bool owner;
 	bool removed;
 	bool suspended;
+	bool auto_inhibited;
 };
 
 static void smartfan_free(struct kref *refs)
@@ -103,6 +105,10 @@ static int smartfan_stop_locked(struct smartfan *fan, u32 reason)
 	fan->boosting = false;
 	fan->duty_percent = 0;
 	fan->stop_reason = reason;
+	if (reason == SMARTFAN_STOP_LEASE || reason == SMARTFAN_STOP_MAX_ON ||
+	    reason == SMARTFAN_STOP_PWM_ERROR || reason == SMARTFAN_STOP_SUSPEND ||
+	    reason == SMARTFAN_STOP_SENSOR)
+		fan->auto_inhibited = true;
 	smartfan_leds_auto_locked(fan);
 	if (fan->pwm)
 	{
@@ -110,6 +116,7 @@ static int smartfan_stop_locked(struct smartfan *fan, u32 reason)
 		if (ret)
 		{
 			fan->stop_reason = SMARTFAN_STOP_PWM_ERROR;
+			fan->auto_inhibited = true;
 			dev_err(fan->misc.parent, "PWM disable failed: %d; EN is OFF\n", ret);
 		}
 	}
@@ -204,6 +211,7 @@ static int smartfan_open(struct inode *inode, struct file *file)
 		kref_get(&fan->refs);
 		fan->owner = true;
 		file->private_data = fan;
+		fan->auto_inhibited = true;
 	}
 	mutex_unlock(&fan->lock);
 	return ret;
@@ -233,11 +241,21 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 	struct smartfan_speed_status speed_status = {0};
 	struct smartfan_led_request led_request;
 	struct smartfan_led_status led_status = {0};
+	struct smartfan_auto_request auto_request;
+	bool automatic = cmd == SMARTFAN_IOC_SET_AUTO;
 	unsigned long now;
 	long ret = 0;
 
 	switch (cmd)
 	{
+	case SMARTFAN_IOC_SET_AUTO:
+		if (copy_from_user(&auto_request, (void __user *)arg, sizeof(auto_request)))
+			return -EFAULT;
+		if (auto_request.abi_version != SMARTFAN_ABI_VERSION ||
+		    auto_request.level > SMARTFAN_MAX_SPEED_LEVEL || auto_request.rearm > 1 ||
+		    auto_request.reserved)
+			return -EINVAL;
+		break;
 	case SMARTFAN_IOC_SET:
 		if (copy_from_user(&request, (void __user *)arg, sizeof(request)))
 			return -EFAULT;
@@ -265,9 +283,9 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 		if (copy_from_user(&led_request, (void __user *)arg, sizeof(led_request)))
 			return -EFAULT;
 		if (led_request.abi_version != SMARTFAN_ABI_VERSION ||
-		    led_request.mode > SMARTFAN_LED_TEST ||
-		    led_request.count > SMARTFAN_LED_SEGMENTS || led_request.reserved ||
-		    (led_request.mode == SMARTFAN_LED_AUTO && led_request.count))
+			led_request.mode > SMARTFAN_LED_TEST ||
+			led_request.count > SMARTFAN_LED_SEGMENTS || led_request.reserved ||
+			(led_request.mode == SMARTFAN_LED_AUTO && led_request.count))
 			return -EINVAL;
 		break;
 	default:
@@ -296,13 +314,47 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 	/* Check expiry here as well: delayed work scheduling is not a deadline. */
 	ret = smartfan_expire_locked(fan, now);
 	if (ret && cmd != SMARTFAN_IOC_GET && cmd != SMARTFAN_IOC_GET_SPEED &&
-	    cmd != SMARTFAN_IOC_GET_LEDS)
+		cmd != SMARTFAN_IOC_GET_LEDS)
 		goto out;
 	/* GET must remain available to report a stopped PWM error state. */
 	ret = 0;
 	now = jiffies;
 	switch (cmd)
 	{
+	case SMARTFAN_IOC_SET_AUTO:
+		if (!fan->pwm) { ret = -EOPNOTSUPP; break; }
+		if (!smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
+					      auto_request.sample_boottime_ms))
+		{
+			smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
+			ret = -ESTALE;
+			break;
+		}
+		if (!smartfan_auto_rearm_allowed(fan->auto_inhibited, auto_request.rearm))
+		{
+			ret = -ECANCELED;
+			break;
+		}
+		fan->auto_inhibited = false;
+		fan->level = auto_request.level;
+		if (!fan->level) { ret = smartfan_stop_locked(fan, SMARTFAN_STOP_USER); break; }
+		fan->last_nonzero_level = fan->level;
+		if (fan->running && !fan->boosting)
+		{
+			ret = smartfan_set_duty_locked(fan, smartfan_level_duty(fan->level));
+			if (ret) break;
+		}
+		request.enabled = 1;
+		if (fan->running)
+		{
+			ret = smartfan_expire_locked(fan, jiffies);
+			if (ret || !fan->running)
+			{
+				if (!ret) ret = -ECANCELED;
+				break;
+			}
+		}
+		fallthrough;
 	case SMARTFAN_IOC_SET:
 		if (!request.enabled)
 		{
@@ -334,18 +386,33 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 			}
 			/* Sleeping configuration must not enable an already expired run. */
 			if (time_after_eq(jiffies, fan->on_deadline) ||
-			    time_after_eq(jiffies, fan->lease_deadline)) {
-				u32 reason = time_after_eq(jiffies, fan->on_deadline) ?
-					SMARTFAN_STOP_MAX_ON : SMARTFAN_STOP_LEASE;
+				time_after_eq(jiffies, fan->lease_deadline))
+			{
+				u32 reason = time_after_eq(jiffies, fan->on_deadline) ? SMARTFAN_STOP_MAX_ON : SMARTFAN_STOP_LEASE;
 
 				ret = smartfan_stop_locked(fan, reason);
 				if (!ret)
 					ret = -ETIMEDOUT;
 				break;
 			}
+			if (automatic && !smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
+								   auto_request.sample_boottime_ms))
+			{
+				smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
+				ret = -ESTALE;
+				break;
+			}
 			gpiod_set_value_cansleep(fan->enable, 1);
 			fan->running = true;
 		}
+		if (automatic && !smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
+						   auto_request.sample_boottime_ms))
+		{
+			smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
+			ret = -ESTALE;
+			break;
+		}
+		fan->auto_inhibited = false;
 		/* Repeat ON renews the lease, but never extends on_deadline. */
 		fan->lease_deadline = now + msecs_to_jiffies(fan->lease_ms);
 		smartfan_leds_auto_locked(fan);
@@ -389,7 +456,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 				break;
 		}
 		ret = smartfan_expire_locked(fan, jiffies);
-		if (ret || !fan->running) {
+		if (ret || !fan->running)
+		{
 			if (!ret)
 				ret = -ETIMEDOUT;
 			break;
@@ -418,7 +486,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 		speed_status.max_level = SMARTFAN_MAX_SPEED_LEVEL;
 		speed_status.duty_percent = fan->duty_percent;
 		speed_status.capabilities = (fan->pwm ? SMARTFAN_CAP_PWM : 0) |
-			(fan->leds ? SMARTFAN_CAP_LED_BAR : 0);
+			(fan->leds ? SMARTFAN_CAP_LED_BAR : 0) |
+			(fan->pwm ? SMARTFAN_CAP_AUTO : 0);
 		speed_status.period_ns = fan->period_ns;
 		if (fan->boosting)
 			speed_status.boost_remaining_ms =
@@ -508,6 +577,7 @@ static int smartfan_probe(struct platform_device *pdev)
 	BUILD_BUG_ON(sizeof(struct smartfan_speed_status) != 32);
 	BUILD_BUG_ON(sizeof(struct smartfan_led_request) != 16);
 	BUILD_BUG_ON(sizeof(struct smartfan_led_status) != 16);
+	BUILD_BUG_ON(sizeof(struct smartfan_auto_request) != 24);
 	fan = kzalloc(sizeof(*fan), GFP_KERNEL);
 	if (!fan)
 		return -ENOMEM;
@@ -703,7 +773,7 @@ static int __maybe_unused smartfan_suspend(struct device *dev)
 	mutex_lock(&fan->lock);
 	fan->suspended = true;
 	if (!fan->removed)
-		smartfan_stop_locked(fan, SMARTFAN_STOP_USER);
+		smartfan_stop_locked(fan, SMARTFAN_STOP_SUSPEND);
 	mutex_unlock(&fan->lock);
 	cancel_delayed_work_sync(&fan->expiry_work);
 	return 0;

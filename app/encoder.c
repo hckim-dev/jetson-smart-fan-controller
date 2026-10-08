@@ -146,7 +146,8 @@ static int encoder_open_config(struct encoder_input *input, const char *chip_pat
         .config = {
             .flags = GPIO_V2_LINE_FLAG_INPUT |
                      (edges ? GPIO_V2_LINE_FLAG_EDGE_RISING |
-                              GPIO_V2_LINE_FLAG_EDGE_FALLING : 0U),
+                                  GPIO_V2_LINE_FLAG_EDGE_FALLING
+                            : 0U),
             /* Explicitly request the period, including zero. Omitting it
              * retains prior hardware configuration. On Tegra L4T36.5.2,
              * zero sets threshold=0 but does not clear debounce-enable.

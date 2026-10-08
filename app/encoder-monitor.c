@@ -89,8 +89,7 @@ int main(int argc, char **argv)
         perror("sigaction");
         return EXIT_FAILURE;
     }
-    if ((poll_levels ? encoder_open_levels(&input, chip_path) :
-         encoder_open_with_debounce(&input, chip_path, reverse, debounce_us)) < 0)
+    if ((poll_levels ? encoder_open_levels(&input, chip_path) : encoder_open_with_debounce(&input, chip_path, reverse, debounce_us)) < 0)
     {
         perror("encoder_open (GPIOv2 both-edge input)");
         fprintf(stderr, "Check GPIO permissions, input pinmux, free lines and "
@@ -111,7 +110,8 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         printf("LEVELS chip=%s S1_offset=%u S2_offset=%u interval_ms=1 "
-               "A=%u B=%u\n", input.chip_path, ENCODER_S1_OFFSET,
+               "A=%u B=%u\n",
+               input.chip_path, ENCODER_S1_OFFSET,
                ENCODER_S2_OFFSET, previous_a, previous_b);
         while (!interrupted)
         {

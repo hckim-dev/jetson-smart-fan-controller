@@ -17,9 +17,11 @@ int main(void)
     assert(!memcmp(bytes, data, 6));
     lcd_encode_byte(0x28, false, bytes);
     assert(!memcmp(bytes, command, 6));
-    for (unsigned int value = 0; value < 256; ++value) {
+    for (unsigned int value = 0; value < 256; ++value)
+    {
         lcd_encode_byte((uint8_t)value, true, bytes);
-        for (unsigned int i = 0; i < 6; ++i) assert(!(bytes[i] & 2));
+        for (unsigned int i = 0; i < 6; ++i)
+            assert(!(bytes[i] & 2));
         assert((bytes[0] >> 4) == (value >> 4));
         assert((bytes[3] >> 4) == (value & 15));
         assert((bytes[0] & 4) == 0 && (bytes[1] & 4) != 0 && (bytes[2] & 4) == 0);
@@ -33,6 +35,13 @@ int main(void)
     assert(!strcmp(rows[1], "SPEED:2/5 LED:4 "));
     lcd_format(false, UINT_MAX, UINT_MAX, rows);
     assert(strlen(rows[0]) == 16 && strlen(rows[1]) == 16);
+    lcd_format_environment(false, 2, 0, true, true, true, 27000, rows);
+    assert(!strcmp(rows[0], "FAN OFF AUTO    "));
+    assert(!strcmp(rows[1], "T:27.0C S:2/5   "));
+    lcd_format_environment(false, 0, 0, false, true, true, -100, rows);
+    assert(!strcmp(rows[1], "T:-0.1C S:0/5   "));
+    lcd_format_environment(false, 2, 0, true, true, false, 27000, rows);
+    assert(!strcmp(rows[1], "T:ERR S:2/5     "));
     struct lcd_display *display = NULL;
     assert(lcd_start(&display, "/dev/i2c-7", 0x77, true) == -1 && errno == EINVAL);
     assert(lcd_start(&display, "/dev/i2c-7", 0x27, true) == 0);

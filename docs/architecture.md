@@ -4,6 +4,8 @@
 새 DT 설치와 실물 점등 시험 대기.
 최신 상태는 LED Bar 실물 시험 성공 보고, LCD 구현 및 100kHz DT 준비 완료다.
 LCD 전압 변환 배선과 주소/mapping 검증은 남아 있다.
+최신 통합은 BMP180 sensor child와 AUTO 정책을 포함한다. 실제 센서 측정/IPC는
+확인했고 AUTO 모터 통합 시험과 LCD 대비 개선은 남아 있다.
 Software Architecture / Kernel Driver / Build Integration / Test Reliability / Hardware Safety를
 세 서브에이전트와 주 에이전트가 검토하여 통합했다.
 
@@ -22,6 +24,8 @@ flowchart TD
     DRV --> LED["GPIO 배열: LED Bar 8칸 · 초기/정지 LOW"]
     CLI --> LCDWORKER["LCD worker · 최신 상태 coalescing"]
     LCDWORKER --> LCD["i2c-dev · PCF8574 · HD44780 16x2"]
+    BMP["BMP180 child · calibration · 1sec samples"] --> IPC["32-byte pipe · partial read · age/error validation"]
+    IPC --> CLI
 ```
 
 - Encoder 입력은 userspace GPIO v2 line request 한 개로 받는다. Kernel GPIO provider가 edge/debounce를 제공하며 별도 IRQ Driver를 만들지 않는다.
@@ -34,7 +38,10 @@ flowchart TD
 - Boost, lease2초, 최대ON30초는 한 delayed worker로 처리한다. 풍속 변경은 최대ON deadline을 연장하지 않는다.
 - 기존 ioctl1..3 ABI/크기는 유지하고 SET_SPEED4/GET_SPEED5를 추가했다. Stage1 DT는 GPIO fallback(0/5단계)을 지원한다. 새 CLI도 이전 module의 ON/OFF를 지원한다.
 - LED Bar는 optional `led-gpios` 8개를 Driver가 소유한다. SET_LEDS6/GET_LEDS7를 추가했으며, LED DT가 없는 이전 구성도 지원한다. 자동 모드에서는 running/level에 동기화하고 stop/close/timeout에도 모두 끈다. OFF 전용 시험 모드는 모터를 시작하지 않는다.
+- AUTO는 SET_AUTO8에서 sample의 BOOTTIME age와 보호 정지 latch를 같은 kernel mutex로 검사한다. 자동 요청은 rearm=0, 명시적 ON만 rearm=1이다. CAP_AUTO가 없는 module에서는 AUTO를 거부한다.
+- LCD 종료 join은 CLOCK_MONOTONIC 기준2초로 제한한다. timeout 후에는 살아 있는 worker 메모리를 해제하지 않고 main이 오류로 종료한다. worker의 control signal을 차단해 main이 신호 처리를 소유한다.
 - LCD는 `--lcd` 선택 시 userspace worker 한 개가 I²C fd와 모든 송수신을 소유한다. Main loop는 최신 상태만 전달하고 통신을 기다리지 않는다. 종료는 motor stop/close 후 LCD worker join 순서다. LCD 오류와 SIGKILL에서 표시가 남을 수 있으며 물리적 motor 상태의 증거로 사용하지 않는다.
+- BMP180 child는 I²C measurement만 수행하고 controller fd는 CLOEXEC로 승계하지 않는다. Parent가 모든 mode/arm/hysteresis/ON/OFF를 결정하고, sensor fault/EOF/stale에서는 AUTO를 disarm한다. LCD와 sensor의 I²C blocking은 main heartbeat와 분리된다. Parent death signal과 signal/waitpid로 child를 정리한다.
 
 ## 보존한 1단계 구조
 
@@ -98,7 +105,7 @@ API 근거: 현재 headers의 `include/linux/{gpio/consumer.h,pwm.h,platform_dev
 | PWM | hardware PWM 우선. EN GPIO interlock을 유지하고 IN1을 GPIO→PWM으로 전환하는 후보. 같은 pin의 GPIO/PWM 동시 점유 금지. OFF는 EN LOW로 보장하고 실제 파형 확인 |
 | LCD | chip/pin 연결 확인 후 i2c-dev userspace. 이미 kernel Driver가 점유한 주소와 병행 접근 금지 |
 | LED BAR | 강의 LED+330Ω array 방식으로 한 칸부터 평가. 추가 Driver는 밝기/전류/반복 동작 검증 결과로 선택 |
-| BMP180 | 온도 기반 AUTO에 적합, 습도 기능 없음. upstream `bmp280-i2c`의 BMP180 지원 재사용 우선; 현재 미설정이므로 matching source/module 가능성 확인. 대안은 보정식을 검증한 i2c-dev 접근 |
+| BMP180 | i2c-dev sensor child 구현. Calibration/보정식,1초 측정과 온도 AUTO 연동 완료. Kernel bmp280 미설정 환경에서 사용하며 습도 기능은 없음 |
 | Multi-process | 통합이 안정된 후 controller만 모터 fd 소유. display/logger 등 분리 필요가 생길 때 bounded IPC 도입 |
 | Multi-thread | 센서/표시 I/O가 이벤트 처리를 막는 근거가 있을 때 도입. 처음부터 thread 추가하지 않음 |
 | 고급 확장 | 둘째 날 안정 버전 확보 후 판단. Qt/Shared Memory 등은 필수 아님 |

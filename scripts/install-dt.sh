@@ -44,8 +44,11 @@ task_dtb=$(awk '/^Proposed FDT: / {print $3}' "$task_record")
 task_label=$(awk '/^Proposed default: / {print $3}' "$task_record")
 if [[ -z "$task_label" ]]; then task_label=smartfan; fi
 case "$task_dtb:$task_label" in
-  /boot/dtb/smartfan-stage1.dtb:smartfan|/boot/dtb/smartfan-stage1-output.dtb:smartfan-output|/boot/dtb/smartfan-stage2.dtb:smartfan-speed|/boot/dtb/smartfan-stage2-encoder-alt.dtb:smartfan-encoder-alt|/boot/dtb/smartfan-ledbar.dtb:smartfan-ledbar|/boot/dtb/smartfan-lcd.dtb:smartfan-lcd) ;;
-  *) echo 'Unexpected managed DTB path or boot label.' >&2; exit 1 ;;
+/boot/dtb/smartfan-stage1.dtb:smartfan | /boot/dtb/smartfan-stage1-output.dtb:smartfan-output | /boot/dtb/smartfan-stage2.dtb:smartfan-speed | /boot/dtb/smartfan-stage2-encoder-alt.dtb:smartfan-encoder-alt | /boot/dtb/smartfan-ledbar.dtb:smartfan-ledbar | /boot/dtb/smartfan-lcd.dtb:smartfan-lcd) ;;
+*)
+  echo 'Unexpected managed DTB path or boot label.' >&2
+  exit 1
+  ;;
 esac
 if [[ -L "$task_dtb" ]]; then
   echo 'Refusing to replace a symlink at the proposed DTB path.' >&2

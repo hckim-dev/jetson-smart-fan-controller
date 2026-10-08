@@ -215,17 +215,23 @@ class FanctlTests(unittest.TestCase):
         self.assertIn(b"SPEED level=5/5 duty=0%", result.stdout)
 
     def test_led_test_stays_off_and_speed_restores_auto(self):
-        result = self.run_input(b"led 1\nstatus\nled 8\nstatus\nspeed 2\nstatus\nled auto\nquit\n")
+        result = self.run_input(
+            b"led 1\nstatus\nled 8\nstatus\nspeed 2\nstatus\nled auto\nquit\n"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(b"STATE ON", result.stdout)
         self.assertGreaterEqual(result.stdout.count(b"mode=test count=1/8"), 2)
         self.assertGreaterEqual(result.stdout.count(b"mode=test count=8/8"), 2)
         self.assertIn(b"SPEED level=2/5 duty=0%", result.stdout)
-        self.assertTrue(result.stdout.rstrip().endswith(b"CLOSED state=OFF reason=quit"))
+        self.assertTrue(
+            result.stdout.rstrip().endswith(b"CLOSED state=OFF reason=quit")
+        )
         self.assertIn(b"mode=auto count=0/8", result.stdout)
 
     def test_led_auto_tracks_speed_and_off(self):
-        result = self.run_input(b"speed 1\non\nspeed 2\nspeed 3\nspeed 4\nspeed 5\noff\nstatus\nquit\n")
+        result = self.run_input(
+            b"speed 1\non\nspeed 2\nspeed 3\nspeed 4\nspeed 5\noff\nstatus\nquit\n"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         for count in (2, 4, 5, 7, 8):
             self.assertIn(f"mode=auto count={count}/8".encode(), result.stdout)
@@ -233,7 +239,9 @@ class FanctlTests(unittest.TestCase):
         self.assertIn(b"mode=auto count=0/8", after_off)
 
     def test_led_rejects_invalid_counts_and_test_while_running(self):
-        result = self.run_input(b"led 3\nled 9\nled -1\nled bad\nstatus\non\nled 1\nstatus\noff\nquit\n")
+        result = self.run_input(
+            b"led 3\nled 9\nled -1\nled bad\nstatus\non\nled 1\nstatus\noff\nquit\n"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.count(b"ERR led must"), 3)
         self.assertIn(b"ERR LED Bar: Device or resource busy", result.stderr)
@@ -256,6 +264,8 @@ class FanctlTests(unittest.TestCase):
             ["--dry-run", "--lcd", "--lcd-address", "0x77"],
             ["--dry-run", "--lcd", "--lcd-address", "0x27extra"],
             ["--dry-run", "--lcd", "--lcd-bus", "x" * 128],
+            ["--sensor-bus", "/dev/i2c-7"],
+            ["--dry-run", "--bmp180", "--sensor-bus", "x" * 128],
         )
         for options in arguments:
             with self.subTest(options=options):
@@ -285,6 +295,88 @@ class FanctlTests(unittest.TestCase):
             session.send("speed 2\non\n")
             session.expect('LCD row1="FAN ON MANUAL   " row2="SPEED:2/5 LED:4 "')
             session.expect('LCD row1="FAN OFF MANUAL  " row2="SPEED:2/5 LED:0 "')
+            code, _, errors = session.finish()
+            self.assertEqual(code, 0, errors)
+
+    def test_auto_requires_explicit_on_and_off_disarms(self):
+        result = self.run_input(
+            b"temp 27\nmode auto\nstatus\non\noff\ntemp 35\nstatus\nquit\n", "--bmp180"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        before_on = result.stdout.split(b"AUTO RUN:", 1)[0]
+        self.assertNotIn(b"STATE ON", before_on)
+        self.assertEqual(result.stdout.count(b"STATE ON"), 1)
+        self.assertIn(b"MODE AUTO armed=0 target=5", result.stdout)
+        self.assertIn(b"SPEED level=5/5 duty=0%", result.stdout)
+
+    def test_auto_sensor_fault_stops_and_recovery_does_not_restart(self):
+        result = self.run_input(
+            b"temp 27\nmode auto\non\ntemp error\ntemp 32\nstatus\nquit\n", "--bmp180"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"AUTO STOP reason=sensor_fault_or_stale", result.stdout)
+        self.assertEqual(result.stdout.count(b"STATE ON"), 1)
+        after_fault = result.stdout.split(b"AUTO STOP", 1)[1]
+        self.assertNotIn(b"AUTO RUN", after_fault)
+        self.assertIn(b"MODE AUTO armed=0 target=5", after_fault)
+
+    def test_auto_hysteresis_and_cold_warm_restart(self):
+        result = self.run_input(
+            b"temp 27\nmode auto\non\ntemp 25.5\ntemp 24.9\ntemp 22\ntemp 27\noff\nquit\n",
+            "--bmp180",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"MODE AUTO armed=1 target=2", result.stdout)
+        self.assertIn(b"MODE AUTO armed=1 target=1", result.stdout)
+        self.assertIn(b"MODE AUTO armed=1 target=0", result.stdout)
+        self.assertEqual(result.stdout.count(b"AUTO RUN:"), 2)
+
+    def test_auto_rejects_manual_override_and_bad_temperatures(self):
+        result = self.run_input(
+            b"temp nan\ntemp inf\ntemp 86\ntemp -41\ntemp 27\nmode auto\nspeed 5\nup\nled 8\nstatus\nquit\n",
+            "--bmp180",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count(b"ERR temp must"), 4)
+        self.assertEqual(result.stderr.count(b"ERR manual speed/LED"), 3)
+        self.assertNotIn(b"STATE ON", result.stdout)
+        result = self.run_input(b"mode auto\non\nquit\n", "--bmp180")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"requires a fresh valid sensor", result.stderr)
+        self.assertNotIn(b"STATE ON", result.stdout)
+
+    def test_auto_stale_sensor_stops_with_heartbeats_running(self):
+        with Session(
+            "--bmp180", "--lease-ms", "500", "--max-on-ms", "10000"
+        ) as session:
+            session.send("temp 27\nmode auto\non\n")
+            session.expect("STATE ON")
+            session.expect("AUTO STOP reason=sensor_fault_or_stale", timeout=5)
+            session.send("temp 32\nstatus\n")
+            session.expect("MODE AUTO armed=0 target=5")
+            code, output, errors = session.finish()
+            self.assertEqual(code, 0, errors)
+            self.assertEqual(output.count("AUTO RUN:"), 1)
+
+    def test_auto_max_on_stops_without_hot_sample_restart(self):
+        with Session("--bmp180", "--lease-ms", "500", "--max-on-ms", "1000") as session:
+            session.send("temp 27\nmode auto\non\n")
+            session.expect("STATE ON")
+            session.expect("AUTO STOP reason=driver_limit")
+            session.send("temp 35\nstatus\n")
+            session.expect("MODE AUTO armed=0 target=5")
+            session.send("on\n")
+            session.expect("STATE ON")
+            code, output, errors = session.finish()
+            self.assertEqual(code, 0, errors)
+            self.assertEqual(output.count("AUTO RUN:"), 2)
+
+    def test_auto_lcd_temperature_and_fault_display(self):
+        with Session("--bmp180", "--lcd") as session:
+            session.send("temp 27\nmode auto\non\n")
+            session.expect('LCD row1="FAN ON AUTO     " row2="T:27.0C S:2/5   "')
+            session.send("temp error\n")
+            session.expect('LCD row1="FAN OFF AUTO    " row2="T:ERR S:2/5     "')
             code, _, errors = session.finish()
             self.assertEqual(code, 0, errors)
 

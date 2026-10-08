@@ -4,6 +4,29 @@
 
 ## 현재 단계
 
+**최종 재검토/수정:** AUTO의 GET→ON 사이 보호 정지 경쟁 조건을 SET_AUTO로
+수정했다. Kernel mutex 안에서 차단 상태와 sample freshness를 확인하며 명시적
+ON만 rearm한다. LCD join2초 제한/worker signal mask, sensor exec errno 전달을
+보완했다. 현재 정상 Kbuild로 all/W=1 build, C6개/CLI25 tests, GCC analyzer,
+BMP180·LCD shutdown ASan/UBSan, offline DT 검사 통과. live I²C100kHz 적용 확인.
+기존 실행 세션 종료와 새 module 재적재가 필요하며 재부팅은 필요 없다.
+[최종 검토](final-review.md), [사용자 최종 시험 순서](final-test.md).
+AUTO 실물 통합 및 PM 시험, LCD 대비 개선, 다음 주 로터리는 남아 있다.
+아래는 앞선 구현 단계의 기록이다.
+
+**최신: BMP180 / AUTO / 전체 기능 통합 구현 완료.** 사용자 BMP1803.3V 배선 및
+신호전압 확인 후 실제측정27.0°C/1021.55hPa, 실제binary IPC27.4°C/1021.42hPa
+(age34ms)을 확인했다. 보정식은 Bosch 예제15.0°C/69964Pa와 일치한다.
+Sensor child(fork/exec/pipe/waitpid),기존LCD worker와 single-controller AUTO 정책을
+추가했다. AUTO는24/26/28/30/32°C 경계와1°C hysteresis,명시적ON arm,오류/3초
+stale 정지를 사용한다. 정상값 복구나최대ON/lease/PM 정지 후 자동 재시작을 막는다.
+PM suspend 정지 사유를 구분하고 sample age를 CLOCK_BOOTTIME으로 계산하도록
+보완했다. 새module 재적재가 필요하며 BMP용 DT/reboot는 필요 없다.
+4개C test,CLI25 tests와BMP ASan/UBSan 및GCC analyzer 검사를 통과했다.
+모터를 켜는 새AUTO 실물시험은 아직 수행하지 않았다. LCD 대비 부족도 남아 있다.
+[실행 안내](bmp180-run.md),[전체 완성도 검토](completeness-review.md).
+이하 내용은 이전 단계별 이력이다.
+
 **최신 사용자 실물 결과:** LCD를3.3V로 공급하고 contrast 가변저항을 조정했을
 때 화면 문자가 표시되지만 잘 보이지 않는다고 보고했다. 기본 통신/초기화/표시가
 동작한 것으로 보고했고, live DT의 `smartfan-lcd` 및100kHz 적용도 확인했다.
