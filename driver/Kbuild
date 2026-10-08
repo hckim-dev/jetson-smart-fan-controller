@@ -1,0 +1,2 @@
+obj-m += smartfan.o
+ccflags-y += -I$(src)/../include

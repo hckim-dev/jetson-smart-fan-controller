@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-2.0
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/gpio/tegra234-gpio.h>
+
+/ {
+	compatible = "nvidia,p3768-0000+p3767-0005-super",
+		     "nvidia,p3768-0000+p3767-0005";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+				smartfan {
+				compatible = "edu,jetson-smartfan";
+				status = "okay";
+				pinctrl-names = "default";
+				pinctrl-0 = <&smartfan_output>;
+				/* J12 physical 32: PG.06; gpiochip line offset 41. */
+				enable-gpios = <&gpio TEGRA234_MAIN_GPIO(G, 6)
+						GPIO_ACTIVE_HIGH>;
+				/* J12 physical 15: PN.01; gpiochip line offset 85. */
+				in1-gpios = <&gpio TEGRA234_MAIN_GPIO(N, 1)
+					     GPIO_ACTIVE_HIGH>;
+				/* J12 physical 29: PQ.05; gpiochip line offset 105. */
+				in2-gpios = <&gpio TEGRA234_MAIN_GPIO(Q, 5)
+					     GPIO_ACTIVE_HIGH>;
+				lease-timeout-ms = <2000>;
+				max-on-ms = <30000>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&pinmux>;
+		__overlay__ {
+			smartfan_output: smartfan-output {
+				outputs {
+					/* Only these three motor GPIO pads are changed. */
+					nvidia,pins = "soc_gpio19_pg6",
+						      "soc_gpio39_pn1",
+						      "soc_gpio32_pq5";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					/* GPIO mode: PADCTL SFSEL bit is zero. */
+					nvidia,gpio-mode = <0>;
+				};
+			};
+		};
+	};
+};

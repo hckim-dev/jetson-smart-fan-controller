@@ -1,0 +1,15 @@
+/build/
+/driver/*.o
+/driver/*.ko
+/driver/*.mod
+/driver/*.mod.c
+/driver/.*.cmd
+/driver/.*.d
+/driver/Module.symvers
+/driver/modules.order
+/driver/.tmp_versions/
+__pycache__/
+*.pyc
+
+/docs/*.pdf
+/docs/img/
