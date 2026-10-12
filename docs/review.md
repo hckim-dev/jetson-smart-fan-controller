@@ -24,10 +24,12 @@ Kernel build에는 GCC 11.4.0의 Ubuntu package revision 차이 경고가 남아
 | AUTO 정지/복구·lease·30초 제한·Ctrl+C 정지 보고 | 최종 종료 수정 후 재확인, 모든 fault/recovery 조합 |
 | 기본 통합 동작                                  | 실제 system suspend, RPM·발열·장기 반복            |
 
+[실물 표시 사진](hardware.md#실제-표시) · [시연 영상](assets/demo.mp4). 보호 정지 항목은 별도 실물 확인 보고이며, 사진만으로 검증한 결과는 아닙니다.
+
 Mock/stub과 sanitizer는 실제 전기적 조건이나 모든 interleaving의 검증을 대신하지 않습니다. PWM duty는 RPM 측정값이 아니며 hard real-time/전원 장애 시 로그 영속성을 보장하지 않습니다.
 
 ## 재현 근거
 
 [테스트 소스](../tests/) · [검사 명령](build-run.md) · [실물 절차](final-test.md)
 
-원본 결과는 로컬 `build/final-fix-validation.log`, `final-fix-module.log`, `final-fix-checkpatch.log`, `final-fix-dt.log`에 보존했습니다. Build/history/원본 사진은 Git에서 제외합니다.
+원본 결과는 로컬 `build/final-fix-validation.log`, `final-fix-module.log`, `final-fix-checkpatch.log`, `final-fix-dt.log`에 보존했습니다. `build/`, `docs/history/`, `docs/img/`는 Git에서 제외하며, 공개용 사진·영상은 [assets/](assets/)에 보관합니다.

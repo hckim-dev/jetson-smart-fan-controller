@@ -4,6 +4,12 @@
 
 `C11` · `Linux 5.15` · `Jetson Orin Nano` · `GPIO / PWM / I²C` · `Process / Thread`
 
+<p align="center">
+  <a href="docs/assets/hardware-overview.jpg"><img src="docs/assets/hardware-overview.jpg" width="360" alt="Jetson Orin Nano와 모터, 센서, 엔코더, LED Bar, LCD를 연결한 전체 장치"></a>
+</p>
+
+**[시연 영상 보기](docs/assets/demo.mp4)** · [배선·표시 사진](docs/hardware.md)
+
 ## 어떤 동작을 하나요?
 
 - **수동 제어:** EC11 엔코더로 풍속 0~5단계 선택, LED Bar·LCD 연동
