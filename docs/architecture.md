@@ -78,3 +78,7 @@ Process 생성·IPC·종료 status 및 회수 지연 시 PID 보존의 상세 �
 ## 선택형 log worker
 
 `--log PATH`는 main이 제출한 record를 고정 크기 queue에 복사하고, 별도 worker가 파일 I/O를 수행합니다. Queue와 stats는 Mutex로 보호하고 condition으로 통지합니다. Worker는 controller/device 상태를 직접 읽거나 변경하지 않습니다. 센서 fork는 LCD/log thread 생성 전에 수행합니다. Log의 drain/join은 모터 정지와 sensor/LCD cleanup 이후입니다. 자세한 소유권과 timeout 정책은 [7단계](stage7-threads.md)를 따릅니다.
+
+## 운영 통계와 Monitor
+
+Session counters는 controller에 두고 main 문맥에서만 갱신합니다. 센서 장애의 관찰 상태는 terminal 통지 상태와 분리합니다. CLI Monitor는 heartbeat 다음에 main poll loop에서 기한을 확인하며 기본 OFF이고 추가 thread를 생성하지 않습니다. Logger snapshot만 기존 mutex로 복사합니다. 상세 정의와 원자 snapshot의 한계는 [8단계](stage8-operations.md)를 따릅니다.

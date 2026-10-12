@@ -12,7 +12,7 @@ make test
 ./build/bmp180-monitor --once
 ```
 
-C11개, CLI32개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
+C11개, CLI37개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
 
 Driver를 변경한 경우 기존 controller를 종료하고 module을 재적재합니다. App만 변경했으면 재적재할 필요가 없습니다. Module이 없으면 `sudo insmod driver/smartfan.ko`를 실행합니다. 적재 실패 이후 그대로 진행하지 않습니다. 현재 DT는 적용돼 있어 추가 GPIO/PWM export·DT 설치·재부팅은 필요 없습니다.
 
@@ -116,3 +116,5 @@ LCD VCC/5V rail의 정지·기동 전압, 모터/L298N 발열, 전원 정격과 
 사용자 확인 날짜·동작·터미널 출력·전압 측정값을 함께 남기면 재현성과 발표 근거가 됩니다. 실물 관찰 없이 checkbox를 채우지 않습니다.
 
 선택형 파일 로그와 thread 종료 검증은 [7단계 절차](stage7-threads.md)를 추가로 실행합니다.
+
+운영 통계와 선택형 주기 출력은 [8단계](stage8-operations.md)의 `stats`, `monitor [500..10000|off]` 명령으로 확인합니다.

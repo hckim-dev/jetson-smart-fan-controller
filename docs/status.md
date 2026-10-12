@@ -1,6 +1,6 @@
 # 현재 구현·검증 상태
 
-2026-10-12, 1~7단계 기준입니다. 과거 세부 기록은 Git 추적에서 제외한 로컬 보관 자료이며, 주요 개발 과정은 [development](development.md)에 정리했습니다.
+2026-10-12, 1~8단계 기준입니다. 과거 세부 기록은 Git 추적에서 제외한 로컬 보관 자료이며, 주요 개발 과정은 [development](development.md)에 정리했습니다.
 
 | 항목             | 상태                       | 증거 / 남은 내용                                                                               |
 | ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -14,6 +14,8 @@
 | Lease            | 구현·사용자 확인           | controller 중단 후 정지 확인 보고, 실제 PM 시험 미수행                                         |
 | Ctrl+C 종료      | 구현·사용자 확인           | fd/process/thread 정리, LCD stuck mock                                                         |
 | Process/IPC      | 구현·검증                  | production monitor + I²C stub의 정상 fork/exec/IPC, AUTO 일관성, parent death, SIGKILL/waitpid |
+| Thread/Log       | 구현·소프트웨어 검증       | 큐/Mutex/condition, ASan/UBSan·TSan, 변경 후 실물 확인 필요                                    |
+| Stats/Monitor    | 구현·소프트웨어 검증       | 장애·복구/입력/session 통계, opt-in/off, heartbeat/max-on 회귀                                 |
 | 전원 설계        | 기능 동작 확인·정량 미완료 | Motor Vs=Jetson5V 핀, 최대·기동·정지 전류와 전체 부하 전압 여유 미측정                         |
 
 현재 운영 명령:
@@ -27,3 +29,5 @@ sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 6단계의 구현·검증 보강과 아직 수행하지 않은 실물 프로세스 종료 시험은 [Process/IPC](stage6-process-ipc.md)를 기준으로 합니다.
 
 7단계의 thread 소유권·로그 옵션·검증 한계와 실물 확인은 [stage7-threads](stage7-threads.md)를 따릅니다.
+
+8단계는 session 통계와 opt-in CLI Monitor를 구현했습니다. Shared Memory/POSIX Semaphore/hardware watchdog/프로세스 자동 복구는 도입하지 않았습니다. 근거와 사용법은 [8단계](stage8-operations.md)를 따릅니다.

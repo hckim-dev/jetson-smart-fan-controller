@@ -22,7 +22,7 @@ make test
 | `make app`        | C 사용자 프로그램4개                                                                                      |
 | `make module W=1` | matching kernel module, 추가 compiler 검사                                                                |
 | `make dt`         | overlay compile                                                                                           |
-| `make test`       | C11개 + CLI32개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                                 |
+| `make test`       | C11개 + CLI37개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                                 |
 | `make analyze`    | GCC analyzer, 사용자 소스12개                                                                             |
 | `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown/process/log/LCD snapshot의 ASan/UBSan9개 |
 | `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존                                    |
@@ -84,3 +84,5 @@ bash scripts/install-dt.sh --check
 - LCD 주소/100kHz 조건은 실제 확인한 값을 사용합니다. LCD 실패는 warning으로 알리며 motor control은 계속됩니다.
 
 `make thread-check`는 GCC ThreadSanitizer로 log producer/consumer와 LCD snapshot 동기화를 검사합니다. 파일 기록 옵션과 테스트 범위는 [7단계](stage7-threads.md)를 참고합니다.
+
+운영 통계와 선택형 주기 출력은 [8단계](stage8-operations.md)의 `stats`, `monitor [500..10000|off]` 명령으로 확인합니다.

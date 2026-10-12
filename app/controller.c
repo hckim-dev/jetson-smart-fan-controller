@@ -25,6 +25,79 @@ static enum sensor_health sensor_state(const struct controller *controller)
     return controller_sensor_fresh(controller) ? SENSOR_VALID : SENSOR_STALE;
 }
 
+static const char *reason_name(uint32_t reason);
+
+static void observe_sensor_health(struct controller *controller)
+{
+    if (!controller->sensor_enabled)
+        return;
+    enum sensor_health state = sensor_state(controller);
+    enum sensor_health previous = controller->stats.previous_health;
+    bool failed = state == SENSOR_ERROR || state == SENSOR_STALE;
+    bool was_failed = previous == SENSOR_ERROR || previous == SENSOR_STALE;
+    if (failed && !was_failed)
+        ++controller->stats.sensor_faults;
+    else if (state == SENSOR_VALID && was_failed)
+        ++controller->stats.sensor_recoveries;
+    controller->stats.previous_health = state;
+}
+
+void controller_print_stats(struct controller *controller)
+{
+    observe_sensor_health(controller);
+    struct event_log_stats log;
+    event_log_snapshot(controller->log, &log);
+    uint64_t now = fan_now_ms();
+    uint64_t uptime = now >= controller->stats.started_ms ? now - controller->stats.started_ms : 0;
+    printf("STATS uptime_ms=%" PRIu64 " commands=%" PRIu64
+           " sensor_frames=%" PRIu64 " injected_samples=%" PRIu64
+           " sensor_faults=%" PRIu64 " sensor_recoveries=%" PRIu64
+           " encoder_cw=%" PRIu64 " encoder_ccw=%" PRIu64 "\n",
+           uptime, controller->stats.commands, controller->stats.sensor_frames,
+           controller->stats.injected_samples, controller->stats.sensor_faults,
+           controller->stats.sensor_recoveries, controller->stats.encoder_cw, controller->stats.encoder_ccw);
+    printf("LOG_STATS enabled=%u written=%" PRIu64 " dropped=%" PRIu64
+           " queued=%u error=%d\n",
+           controller->log != NULL, log.written,
+           log.dropped, log.queued, log.error);
+}
+
+int controller_monitor_tick(struct controller *controller)
+{
+    if (!controller->monitor_interval_ms)
+        return 0;
+    uint64_t now = fan_now_ms();
+    if (now < controller->next_monitor_ms)
+        return 0;
+    struct smartfan_status state;
+    struct smartfan_speed_status speed;
+    if (fan_device_get_speed(&controller->device, &speed) < 0 ||
+        fan_device_get(&controller->device, &state) < 0)
+        return -1;
+    struct event_log_stats log;
+    event_log_snapshot(controller->log, &log);
+    const char *health = "disabled";
+    if (controller->sensor_enabled)
+    {
+        const char *names[] = {"pending", "valid", "error", "stale"};
+        health = names[sensor_state(controller)];
+    }
+    printf("MONITOR mode=%s armed=%u running=%u level=%u duty=%u%% sensor=%s"
+           " temp_mc=%" PRId32 " pressure_pa=%" PRId32 " sensor_pid=%ld"
+           " stop_reason=%s lease_remaining_ms=%u on_remaining_ms=%u"
+           " log_dropped=%" PRIu64 " log_error=%d\n",
+           controller->auto_mode ? "AUTO" : "MANUAL", controller->auto_armed,
+           (unsigned int)state.running, (unsigned int)speed.level,
+           state.running ? (unsigned int)speed.duty_percent : 0U,
+           health, controller->sample.temperature_mc, controller->sample.pressure_pa,
+           (long)controller->sensor.pid, state.running ? "none" : reason_name(state.stop_reason),
+           (unsigned int)state.lease_remaining_ms, (unsigned int)state.on_remaining_ms,
+           log.dropped, log.error);
+    /* Schedule from this emission: no catch-up flood after a stall/suspend. */
+    controller->next_monitor_ms = now + controller->monitor_interval_ms;
+    return 0;
+}
+
 static void print_environment(struct controller *controller)
 {
     printf("MODE %s armed=%u target=%u\n", controller->auto_mode ? "AUTO" : "MANUAL",
@@ -126,6 +199,7 @@ int controller_print_speed(struct controller *controller)
 /* Kernel validates AUTO inhibition and sample freshness atomically with output. */
 int controller_auto_tick(struct controller *controller)
 {
+    observe_sensor_health(controller);
     if (!controller->auto_mode)
         return 0;
     if (!controller_sensor_fresh(controller))
@@ -238,14 +312,38 @@ int controller_command(struct controller *controller, char *line, bool *known_ru
         line[--length] = '\0';
     if (!length)
         return 0;
+    ++controller->stats.commands;
     event_log_submit(controller->log, "CMD %s", line);
     printf("CMD %s\n", line);
     if (!strcmp(line, "quit"))
         return 1;
     if (!strcmp(line, "help"))
     {
-        puts("Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, mode manual, mode auto, heartbeat, help, quit\nDry-run sensor: temp N, temp error");
+        puts("Commands: on, off, status, speed 0..5, up, down, led 0..8, led auto, mode manual, mode auto, heartbeat, stats, monitor [500..10000|off], help, quit\nDry-run sensor: temp N, temp error");
         return 0;
+    }
+    if (!strcmp(line, "stats"))
+    {
+        controller_print_stats(controller);
+        return 0;
+    }
+    if (!strcmp(line, "monitor") || !strncmp(line, "monitor ", 8))
+    {
+        if (!strcmp(line, "monitor off"))
+        {
+            controller->monitor_interval_ms = 0;
+            puts("MONITOR disabled");
+            return 0;
+        }
+        uint32_t interval = 1000;
+        if (strcmp(line, "monitor") && controller_parse_ms(line + 8, 500, 10000, &interval))
+        {
+            fputs("ERR monitor interval must be 500..10000 ms or off\n", stderr);
+            return 0;
+        }
+        controller->monitor_interval_ms = interval;
+        controller->next_monitor_ms = 0;
+        return controller_monitor_tick(controller);
     }
     if (!strcmp(line, "mode auto") || !strcmp(line, "mode manual"))
     {
@@ -287,6 +385,7 @@ int controller_command(struct controller *controller, char *line, bool *known_ru
         }
         controller->sample = (struct sensor_sample){.magic = SENSOR_MAGIC, .sequence = 1, .error = fault ? EIO : 0, .temperature_mc = temperature, .pressure_pa = 101325, .timestamp_ms = fan_now_ms()};
         controller->have_sample = true;
+        ++controller->stats.injected_samples;
     }
     else if (controller->auto_mode && (!strncmp(line, "speed ", 6) ||
                                        !strcmp(line, "up") || !strcmp(line, "down") ||
@@ -365,7 +464,12 @@ int controller_command(struct controller *controller, char *line, bool *known_ru
              (!strcmp(line, "cw") || !strcmp(line, "ccw")))
     {
         int delta = !strcmp(line, "cw") ? 1 : -1;
-        if (controller_change_level(controller, reverse_encoder ? -delta : delta) < 0)
+        delta = reverse_encoder ? -delta : delta;
+        if (delta > 0)
+            ++controller->stats.encoder_cw;
+        else
+            ++controller->stats.encoder_ccw;
+        if (controller_change_level(controller, delta) < 0)
             return -1;
     }
     else if (strcmp(line, "status"))

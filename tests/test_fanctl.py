@@ -74,6 +74,87 @@ class Session:
 
 
 class FanctlTests(unittest.TestCase):
+    def test_session_stats_count_fault_episodes_recovery_and_encoder(self):
+        result = subprocess.run(
+            [str(CLI), "--dry-run", "--bmp180", "--encoder"],
+            input="temp error\ntemp error\ntemp 27\ncw\nccw\nup\nstats\nquit\n",
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stats = next(
+            line for line in result.stdout.splitlines() if line.startswith("STATS ")
+        )
+        for value in (
+            "commands=7",
+            "sensor_frames=0",
+            "injected_samples=3",
+            "sensor_faults=1",
+            "sensor_recoveries=1",
+            "encoder_cw=1",
+            "encoder_ccw=1",
+        ):
+            self.assertIn(value, stats)
+        self.assertIn(
+            "LOG_STATS enabled=0 written=0 dropped=0 queued=0 error=0", result.stdout
+        )
+        self.assertNotIn("STATE ON", result.stdout)
+
+    def test_monitor_is_opt_in_and_off_stops_periodic_output(self):
+        with Session() as session:
+            session.send("stats\n")
+            session.expect("LOG_STATS")
+            self.assertFalse(any(line.startswith("MONITOR ") for line in session.lines))
+            session.send("monitor 500\n")
+            session.expect("MONITOR mode=MANUAL")
+            session.expect("MONITOR mode=MANUAL", timeout=2)
+            session.send("monitor off\n")
+            session.expect("MONITOR disabled")
+            start = len(session.lines)
+            time.sleep(0.65)
+            self.assertFalse(
+                any(line.startswith("MONITOR mode=") for line in session.lines[start:])
+            )
+            result, output, errors = session.finish()
+            self.assertEqual(result, 0, errors)
+
+    def test_invalid_monitor_interval_is_rejected(self):
+        for value in ("0", "499", "10001", "-1", "abc", "500x"):
+            result = subprocess.run(
+                [str(CLI), "--dry-run"],
+                input=f"monitor {value}\nquit\n",
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("ERR monitor interval", result.stderr)
+            self.assertNotIn("MONITOR mode=", result.stdout)
+
+    def test_monitor_does_not_extend_max_on_or_block_heartbeat(self):
+        with Session("--lease-ms", "500", "--max-on-ms", "1200") as session:
+            session.send("monitor 500\non\n")
+            session.expect("STATE ON")
+            session.expect("STATE OFF reason=max_on", timeout=3)
+            result, output, errors = session.finish()
+            self.assertEqual(result, 0, errors)
+            self.assertNotIn("STATE OFF reason=lease", output)
+            self.assertIn("MONITOR mode=MANUAL", output)
+
+    def test_stats_exposes_log_and_session_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "events.log"
+            with Session("--log", str(path)) as session:
+                session.send("stats\n")
+                session.expect("LOG_STATS enabled=1")
+                result, output, errors = session.finish()
+            self.assertEqual(result, 0, errors)
+            self.assertIn(
+                "SESSION_STATS commands=2 frames=0 faults=0 recoveries=0",
+                path.read_text(),
+            )
+
     def test_async_log_preserves_cli_and_drains_on_exit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "events.log"

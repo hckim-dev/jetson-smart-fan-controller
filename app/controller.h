@@ -16,10 +16,21 @@ enum sensor_health
     SENSOR_STALE,
 };
 
+/* Session counters are main-owned; no worker reads or writes them. */
+struct controller_stats
+{
+    uint64_t started_ms, commands, sensor_frames, injected_samples;
+    uint64_t sensor_faults, sensor_recoveries, encoder_cw, encoder_ccw;
+    enum sensor_health previous_health;
+};
+
 /* Main owns resource lifetime and serializes all controller calls. */
 struct controller
 {
     struct fan_device device;
+    struct controller_stats stats;
+    uint32_t monitor_interval_ms;
+    uint64_t next_monitor_ms;
     struct lcd_display *lcd;
     struct event_log *log;
     struct sensor_reader sensor;
@@ -33,6 +44,8 @@ struct controller
 
 bool controller_sensor_fresh(const struct controller *controller);
 bool controller_report_sensor_transition(struct controller *controller);
+void controller_print_stats(struct controller *controller);
+int controller_monitor_tick(struct controller *controller);
 int controller_print_speed(struct controller *controller);
 int controller_auto_tick(struct controller *controller);
 int controller_change_level(struct controller *controller, int delta);

@@ -50,6 +50,7 @@ static void usage(FILE *out, const char *program)
                  "Sensor commands: mode manual, mode auto; temp N/error (dry-run only).\n"
                  "Dry-run encoder simulation: cw, ccw (requires --encoder).\n"
                  "       [--log PATH] (append-only asynchronous event log)\n"
+                 "Monitor commands: stats, monitor [500..10000|off]\n"
                  "Keep this foreground process open while the fan is ON.\n",
             program);
 }
@@ -77,6 +78,7 @@ int main(int argc, char **argv)
         .sensor = {.fd = -1},
     };
     fan_device_init(&controller.device);
+    controller.stats.started_ms = fan_now_ms();
     struct smartfan_status state;
     struct encoder_input encoder = {.fd = -1};
     bool encoder_enabled = false, reverse_encoder = false;
@@ -391,6 +393,13 @@ int main(int argc, char **argv)
             }
             next_heartbeat = fan_now_ms() + heartbeat_interval;
         }
+        if (controller_monitor_tick(&controller) < 0)
+        {
+            perror("monitor");
+            result = EXIT_FAILURE;
+            exit_reason = "error";
+            break;
+        }
         if (controller.lcd)
         {
             struct smartfan_speed_status speed;
@@ -446,6 +455,7 @@ int main(int argc, char **argv)
                     controller.sensor.fd = -1;
                     break;
                 }
+                ++controller.stats.sensor_frames;
                 controller.sample = sample;
                 controller.have_sample = true;
             }
@@ -480,6 +490,8 @@ int main(int argc, char **argv)
             /* Apply every detent in order: a net-zero batch can cross STOP. */
             for (unsigned int i = 0; i < encoder.num_steps && !received_signal; ++i)
             {
+                if (encoder.steps[i] > 0) ++controller.stats.encoder_cw;
+                else ++controller.stats.encoder_ccw;
                 if (controller.auto_mode)
                     continue;
                 if (controller_change_level(&controller, encoder.steps[i]) < 0 || controller_print_speed(&controller) < 0)
@@ -585,6 +597,10 @@ cleanup:
     if (controller.log)
     {
         struct event_log_stats stats;
+        event_log_submit(controller.log, "SESSION_STATS commands=%" PRIu64 " frames=%" PRIu64
+                         " faults=%" PRIu64 " recoveries=%" PRIu64,
+                         controller.stats.commands, controller.stats.sensor_frames,
+                         controller.stats.sensor_faults, controller.stats.sensor_recoveries);
         event_log_submit(controller.log, "STOP reason=%s result=%d", received_signal ? "signal" : exit_reason, result);
         int error = event_log_finish(controller.log, &stats);
         printf("LOG_CLOSED written=%" PRIu64 " dropped=%" PRIu64 " error=%d\n",

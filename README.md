@@ -2,7 +2,7 @@
 
 Jetson Orin Nano에서 Linux Kernel Driver와 C 사용자 프로그램으로 모터, 로터리 엔코더, LED Bar, LCD, BMP180을 통합한 스마트 선풍기 제어 프로젝트입니다.
 
-단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~7단계이며 7단계에서는 선택형 비동기 파일 기록과 동기화 검증을 추가했습니다.
+단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~8단계이며 7단계의 비동기 파일 기록에 이어 8단계에서 session 통계와 선택형 CLI Monitor를 추가했습니다.
 
 ## 핵심 기능
 
@@ -62,6 +62,7 @@ sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 - [현재 하드웨어·핀 연결·전원 한계](docs/hardware.md)
 - [빌드·실행·개발 검증](docs/build-run.md)
 - [통합 실물 테스트](docs/final-test.md)
+- [8단계 운영 통계와 CLI Monitor](docs/stage8-operations.md)
 - [7단계 Thread/동기화와 로그](docs/stage7-threads.md)
 - [6단계 Process/IPC 설계와 검증](docs/stage6-process-ipc.md)
 - [개발 과정과 문제 해결](docs/development.md)

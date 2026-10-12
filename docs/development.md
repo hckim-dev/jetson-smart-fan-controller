@@ -2,15 +2,16 @@
 
 ## 요구 단계와 실제 구현
 
-| 요구 단계        | 현재 구현                                               | 증거 / 범위                                                |
-| ---------------- | ------------------------------------------------------- | ---------------------------------------------------------- |
-| 1. Kernel ON/OFF | platform driver, miscdevice, GPIO consumer, bounded run | native module build, 사용자 motor 회전 보고                |
-| 2. Rotary/PWM    | GPIO v2 양edge/Gray, 0~5단계, NPN 입력 보강             | mock request/decoder tests, 사용자 통합 입력 성공          |
-| 3. LCD           | PCF8574 4bit 초기화, worker, 모드/온도/풍속             | protocol/mock tests, 사용자 문자 표시(대비 미해결)         |
-| 4. LED Bar       | optional GPIO8개, 독립시험/풍속연동                     | level mapping tests, 사용자8칸 점등                        |
-| 5. BMP180/AUTO   | calibration/보정식, hysteresis, fault/stale stop        | Bosch 예제와 실제I²C/IPC, AUTO 회귀 및 사용자정지/복구보고 |
-| 7. Thread/Sync   | LCD snapshot worker, 선택형 파일 log queue/worker       | concurrent producers/snapshots, sanitizer 및 CLI 로그 검증 |
-| 6. Process/IPC   | sensor fork/exec/pipe/waitpid/signals                   | partial IPC/exec 오류/수명 tests, 실제child sample         |
+| 요구 단계        | 현재 구현                                               | 증거 / 범위                                                    |
+| ---------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| 1. Kernel ON/OFF | platform driver, miscdevice, GPIO consumer, bounded run | native module build, 사용자 motor 회전 보고                    |
+| 2. Rotary/PWM    | GPIO v2 양edge/Gray, 0~5단계, NPN 입력 보강             | mock request/decoder tests, 사용자 통합 입력 성공              |
+| 3. LCD           | PCF8574 4bit 초기화, worker, 모드/온도/풍속             | protocol/mock tests, 사용자 문자 표시(대비 미해결)             |
+| 4. LED Bar       | optional GPIO8개, 독립시험/풍속연동                     | level mapping tests, 사용자8칸 점등                            |
+| 5. BMP180/AUTO   | calibration/보정식, hysteresis, fault/stale stop        | Bosch 예제와 실제I²C/IPC, AUTO 회귀 및 사용자정지/복구보고     |
+| 6. Process/IPC   | sensor fork/exec/pipe/waitpid/signals                   | partial IPC/exec 오류/수명 tests, 실제child sample             |
+| 7. Thread/Sync   | LCD snapshot worker, 선택형 파일 log queue/worker       | concurrent producers/snapshots, sanitizer 및 CLI 로그 검증     |
+| 8. Operations    | session 통계, 선택형 CLI Monitor                        | CLI fault/recovery counters, 출력 주기와 heartbeat/max-on 회귀 |
 
 구현 순서는 전기 조건과 실물 확인에 맞춰 조정했습니다. Motor→PWM→LED→LCD→BMP/AUTO/IPC를 진행하고, 미해결 EC11 입력을 마지막에 NPN 회로로 보강했습니다. LCD I/O를 main에서 분리하기 위한 thread는 이미 구현된 구조이며 별도의 다음 단계 확장을 추가한 것이 아닙니다.
 
@@ -53,3 +54,7 @@ LF-only parser는 raw PTY에서 CR Enter를 무시하는 결함이 있어CR/LF/C
 ## 7단계 필요한 작업만 thread로 분리
 
 모터/모드 상태는 단일 main owner로 유지하고 sensor process도 보존했습니다. Blocking 파일 기록만 선택형 worker로 추가하고 bounded queue, overflow accounting, signal mask, 종료 drain과 live object 수명을 검증했습니다. 설계와 한계는 [7단계](stage7-threads.md)에 기록했습니다.
+
+## 8단계 운영 가시성 확장
+
+기존 pipe/Mutex/lease가 현재 규모의 전달·동기화·제어 중단 보호를 담당하므로, 새로운 IPC나 재부팅 watchdog을 중복 도입하지 않았습니다. 실제 운전 상태를 확인할 stats/Monitor를 우선했습니다. 자동 respawn은 회수·backoff·재기동 보호의 추가 검증이 필요해 보류했습니다. 구현과 보류 판단은 [8단계](stage8-operations.md)에 정리했습니다.

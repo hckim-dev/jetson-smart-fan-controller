@@ -82,8 +82,30 @@ static void scenario(int32_t temp, bool rearm, bool stale, bool expect_running)
     if (!expect_running)
         assert(!backend.auto_armed);
 }
+static void test_stats_stale_episode(void)
+{
+    struct controller controller = {.sensor_enabled = true, .have_sample = true, .sample = {.timestamp_ms = fan_now_ms() - SENSOR_MAX_AGE_MS}};
+    /* Stats health is independent of terminal status/report suppression. */
+    assert(controller_report_sensor_transition(&controller));
+    assert(controller_auto_tick(&controller) == 0);
+    assert(controller_auto_tick(&controller) == 0);
+    assert(controller.stats.sensor_faults == 1);
+    controller.sample.error = EIO;
+    assert(controller_auto_tick(&controller) == 0);
+    assert(controller.stats.sensor_faults == 1); /* Same failed episode. */
+    controller.sample.error = 0;
+    controller.sample.timestamp_ms = fan_now_ms();
+    assert(controller_auto_tick(&controller) == 0);
+    assert(controller.stats.sensor_recoveries == 1);
+    controller.sample.error = EIO;
+    assert(controller_auto_tick(&controller) == 0);
+    assert(controller.stats.sensor_faults == 2);
+    puts("PASS stats: stale/error share one episode; recovery and new fault counted independently of status output");
+}
+
 int main(void)
 {
+    test_stats_stale_episode();
     struct controller notices = {.sensor_enabled = true};
     assert(!controller_report_sensor_transition(&notices));
     notices.have_sample = true;
