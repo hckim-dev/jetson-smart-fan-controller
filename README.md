@@ -8,7 +8,7 @@
   <a href="docs/assets/hardware-overview.jpg"><img src="docs/assets/hardware-overview.jpg" width="360" alt="Jetson Orin Nano와 모터, 센서, 엔코더, LED Bar, LCD를 연결한 전체 장치"></a>
 </p>
 
-**[시연 영상 보기](docs/assets/demo.mp4)** · [배선·표시 사진](docs/hardware.md)
+[배선·표시 사진](docs/hardware.md)
 
 ## 어떤 동작을 하나요?
 
@@ -16,6 +16,10 @@
 - **자동 제어:** BMP180 온도로 목표 풍속 결정, hysteresis로 경계 진동 억제
 - **보호 정지:** heartbeat 중단 시 lease 2초, 연속 구동 30초 제한
 - **장애 대응:** 센서 오류·데이터 만료 시 AUTO 정지, 복구 후 명시적 ON 요구
+
+<p align="center">
+  <img width="3000" height="4000" alt="Image" src="https://github.com/user-attachments/assets/1d42554c-e0c0-4a2c-aa6d-fc792742a5ed" />
+</p>
 
 ## 어떻게 설계했나요?
 
