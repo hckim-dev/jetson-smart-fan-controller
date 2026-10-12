@@ -17,15 +17,15 @@ make test
 
 ## 개발 검증
 
-| 명령              | 범위                                                                             |
-| ----------------- | -------------------------------------------------------------------------------- |
-| `make app`        | C 사용자 프로그램4개                                                             |
-| `make module W=1` | matching kernel module, 추가 compiler 검사                                       |
-| `make dt`         | overlay compile                                                                  |
-| `make test`       | C8개 + CLI29개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                         |
-| `make analyze`    | GCC analyzer, 사용자 소스11개                                                    |
-| `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown의 ASan/UBSan6개 |
-| `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존           |
+| 명령              | 범위                                                                                     |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `make app`        | C 사용자 프로그램4개                                                                     |
+| `make module W=1` | matching kernel module, 추가 compiler 검사                                               |
+| `make dt`         | overlay compile                                                                          |
+| `make test`       | C9개 + CLI29개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                 |
+| `make analyze`    | GCC analyzer, 사용자 소스11개                                                            |
+| `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown/process의 ASan/UBSan7개 |
+| `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존                   |
 
 CC/CFLAGS/LDFLAGS/LDLIBS를 지정할 수 있습니다. C11/Wall/Wextra/Wpedantic/Werror는 유지하며 test에서는 NDEBUG를 해제해 assert 검사가 사라지지 않게 합니다. Makefile 변경도 binary 의존성에 포함합니다. `analyze`는 GCC의 -fanalyzer가 있는 compiler를 사용합니다.
 

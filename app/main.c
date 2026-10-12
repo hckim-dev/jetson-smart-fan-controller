@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -83,6 +84,7 @@ int main(int argc, char **argv)
     unsigned int lcd_address = 0x27;
     const char *sensor_bus = "/dev/i2c-7";
     bool sensor_bus_selected = false;
+    bool sensor_exit_reported = false;
     const char *encoder_chip = NULL;
     struct sigaction action = {0};
     const char *device = "/dev/smartfan";
@@ -315,7 +317,17 @@ int main(int argc, char **argv)
             {.fd = controller.sensor.fd, .events = POLLIN},
         };
         uint64_t now = fan_now_ms();
+        pid_t sensor_pid = controller.sensor.pid;
         sensor_reap(&controller.sensor);
+        if (controller.sensor.exited && !sensor_exit_reported)
+        {
+            int status = controller.sensor.wait_status;
+            if (WIFEXITED(status))
+                printf("SENSOR_EXIT pid=%ld exit_code=%d\n", (long)sensor_pid, WEXITSTATUS(status));
+            else if (WIFSIGNALED(status))
+                printf("SENSOR_EXIT pid=%ld signal=%d\n", (long)sensor_pid, WTERMSIG(status));
+            sensor_exit_reported = true;
+        }
         if (fan_device_get(&controller.device, &state) < 0)
         {
             perror("get status");
@@ -531,6 +543,8 @@ cleanup:
     if (controller.device.fd >= 0)
         close(controller.device.fd);
     sensor_stop(&controller.sensor);
+    if (controller.sensor.pid > 0)
+        result = EXIT_FAILURE; /* A pending child is not successful cleanup. */
     int lcd_cleanup_error = lcd_finish(controller.lcd);
     if (lcd_cleanup_error)
     {

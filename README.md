@@ -62,6 +62,7 @@ sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 - [현재 하드웨어·핀 연결·전원 한계](docs/hardware.md)
 - [빌드·실행·개발 검증](docs/build-run.md)
 - [통합 실물 테스트](docs/final-test.md)
+- [6단계 Process/IPC 설계와 검증](docs/stage6-process-ipc.md)
 - [개발 과정과 문제 해결](docs/development.md)
 - [발표·포트폴리오용 설명](docs/portfolio.md)
 - [이번 품질 개선 결과](docs/quality-review.md)

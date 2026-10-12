@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise artifact cleanup in a disposable project, never the real workspace."""
+
 import pathlib
 import shutil
 import subprocess
@@ -19,14 +20,29 @@ class BuildTests(unittest.TestCase):
             (kernel / "Makefile").write_text(".PHONY: clean\nclean:\n\t@:\n")
             build = project / "build"
             build.mkdir()
-            kept = ["measurement.log", "user-notes.txt", "boot-proposal.txt",
-                    "extlinux.before-smartfan.conf", "custom-experiment.c"]
-            removed = ["fanctl", "encoder-monitor", "test_sensor", "smartfan.dtbo"]
+            kept = [
+                "measurement.log",
+                "user-notes.txt",
+                "boot-proposal.txt",
+                "extlinux.before-smartfan.conf",
+                "custom-experiment.c",
+            ]
+            removed = [
+                "fanctl",
+                "encoder-monitor",
+                "test_sensor",
+                "test_process",
+                "test-bmp180-process",
+                "smartfan.dtbo",
+            ]
             for name in kept + removed:
                 (build / name).write_text("sentinel\n")
             result = subprocess.run(
-                ["make", "clean", f"KDIR={kernel}"], cwd=project,
-                capture_output=True, text=True, timeout=10
+                ["make", "clean", f"KDIR={kernel}"],
+                cwd=project,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             for name in kept:

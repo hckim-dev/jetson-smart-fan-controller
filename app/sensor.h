@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef SMARTFAN_SENSOR_H
 #define SMARTFAN_SENSOR_H
+#include <stdbool.h>
 #include <stdint.h>
 #include <sys/types.h>
 #define SENSOR_MAGIC UINT32_C(0x424d5031)
@@ -17,6 +18,8 @@ struct sensor_reader
 {
     int fd;
     pid_t pid;
+    bool exited;
+    int wait_status;
     unsigned int used;
     uint32_t sequence;
     unsigned char buffer[sizeof(struct sensor_sample)];
@@ -24,7 +27,10 @@ struct sensor_reader
 int sensor_start(struct sensor_reader *reader, const char *program, const char *bus);
 /* 1=one complete frame, 0=EAGAIN/partial frame, -1=error/EOF. */
 int sensor_next(struct sensor_reader *reader, struct sensor_sample *sample, uint64_t now_ms);
+/* Nonblocking reap retains the raw wait status for exit diagnostics. */
 void sensor_reap(struct sensor_reader *reader);
+/* Closes IPC first, SIGTERM then SIGKILL fallback. A still-pending child PID
+ * is retained on timeout so cleanup can be retried; never wait indefinitely. */
 void sensor_stop(struct sensor_reader *reader);
 unsigned int auto_temperature_level(unsigned int previous, int32_t temperature_mc);
 #endif

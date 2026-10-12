@@ -7,16 +7,26 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
 int __real_execv(const char *path, char *const argv[]);
 pid_t __real_fork(void);
-static int fail_fork;
+static int fail_fork, defer_reap;
+pid_t __real_waitpid(pid_t pid, int *status, int options);
+pid_t __wrap_waitpid(pid_t pid, int *status, int options)
+{
+    return defer_reap ? 0 : __real_waitpid(pid, status, options);
+}
 
 pid_t __wrap_fork(void)
 {
-    if (fail_fork) { errno = EAGAIN; return -1; }
+    if (fail_fork)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
     return __real_fork();
 }
 
@@ -49,12 +59,13 @@ int __wrap_execv(const char *path, char *const argv[])
     struct sigaction action;
     sigset_t mask;
     if (sigaction(SIGTERM, NULL, &action) < 0 ||
-        sigprocmask(SIG_SETMASK, NULL, &mask) < 0) _exit(124);
-    struct sensor_sample ready = {.magic = SENSOR_MAGIC, .sequence = 1,
-        .error = EINPROGRESS, .temperature_mc = action.sa_handler == SIG_DFL,
-        .pressure_pa = sigismember(&mask, SIGTERM) == 0};
-    if (write(STDOUT_FILENO, &ready, sizeof(ready)) != sizeof(ready)) _exit(125);
-    for (;;) pause();
+        sigprocmask(SIG_SETMASK, NULL, &mask) < 0)
+        _exit(124);
+    struct sensor_sample ready = {.magic = SENSOR_MAGIC, .sequence = 1, .error = EINPROGRESS, .temperature_mc = action.sa_handler == SIG_DFL, .pressure_pa = sigismember(&mask, SIGTERM) == 0};
+    if (write(STDOUT_FILENO, &ready, sizeof(ready)) != sizeof(ready))
+        _exit(125);
+    for (;;)
+        pause();
 }
 
 static void parent_signal_handler(int signo) { (void)signo; }
@@ -76,9 +87,11 @@ static void test_pre_exec_termination(void)
     assert(sensor_start(&reader, "test-pre-exec-window", "unused") == 0);
     const struct timespec delay = {.tv_nsec = 1000000};
     int result = 0;
-    for (unsigned int i = 0; i < 2000 && !result; ++i) {
+    for (unsigned int i = 0; i < 2000 && !result; ++i)
+    {
         result = sensor_next(&reader, &sample, UINT64_C(1000000000000));
-        if (!result) nanosleep(&delay, NULL);
+        if (!result)
+            nanosleep(&delay, NULL);
     }
     assert(result == 1 && sample.error == EINPROGRESS);
     assert(sample.temperature_mc == 1 && sample.pressure_pa == 1);
@@ -91,6 +104,30 @@ static void test_pre_exec_termination(void)
      * wall-clock assertion. The child is ready to terminate on SIGTERM.
      */
     assert(reader.fd == -1 && reader.pid == 0);
+}
+
+static void test_deferred_reap(void)
+{
+    struct sensor_reader reader;
+    struct sensor_sample sample;
+    assert(sensor_start(&reader, "test-pre-exec-window", "unused") == 0);
+    const struct timespec delay = {.tv_nsec = 1000000};
+    int result = 0;
+    for (unsigned int i = 0; i < 2000 && !result; ++i)
+    {
+        result = sensor_next(&reader, &sample, UINT64_C(1000000000000));
+        if (!result)
+            nanosleep(&delay, NULL);
+    }
+    assert(result == 1);
+    pid_t pid = reader.pid;
+    defer_reap = 1;
+    sensor_stop(&reader); /* Simulate waitpid still pending after deadline. */
+    assert(reader.fd == -1 && reader.pid == pid && !reader.exited);
+    defer_reap = 0;
+    sensor_stop(&reader); /* Cleanup ownership must survive the first attempt. */
+    assert(reader.pid == 0 && reader.exited);
+    puts("PASS pending child: PID retained until waitpid succeeds; cleanup retry");
 }
 
 int main(void)
@@ -149,7 +186,8 @@ int main(void)
         if (reader.pid)
             nanosleep(&interval, NULL);
     }
-    assert(reader.pid == 0);
+    assert(reader.pid == 0 && reader.exited);
+    assert(WIFEXITED(reader.wait_status) && WEXITSTATUS(reader.wait_status) == 1);
     sensor_stop(&reader);
     assert(reader.fd == -1 && reader.pid == 0);
     sensor_stop(&reader);
@@ -162,9 +200,19 @@ int main(void)
             nanosleep(&interval, NULL);
     }
     assert(result == 1 && received.error == ENOTDIR);
+    /* Let exec failure exit naturally; SIGTERM must not race the expected 127. */
+    for (unsigned int i = 0; i < 1000 && reader.pid; ++i)
+    {
+        sensor_reap(&reader);
+        if (reader.pid)
+            nanosleep(&interval, NULL);
+    }
+    assert(reader.pid == 0 && reader.exited);
+    assert(WIFEXITED(reader.wait_status) && WEXITSTATUS(reader.wait_status) == 127);
     sensor_stop(&reader);
     test_fork_failure();
     test_pre_exec_termination();
+    test_deferred_reap();
     puts("PASS sensor IPC: partial reads, EAGAIN, sequence errors, EOF, fork/exec error frame, pre-exec signal cleanup");
     return 0;
 }

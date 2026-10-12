@@ -23,6 +23,11 @@ unsigned int auto_temperature_level(unsigned int previous, int32_t temperature_m
 
 int sensor_start(struct sensor_reader *reader, const char *program, const char *bus)
 {
+    if (!reader || !program || !program[0] || !bus || !bus[0])
+    {
+        errno = EINVAL;
+        return -1;
+    }
     int pipefd[2];
     char parent[32];
     memset(reader, 0, sizeof(*reader));
@@ -143,14 +148,31 @@ int sensor_next(struct sensor_reader *reader, struct sensor_sample *sample, uint
     return 1;
 }
 
-void sensor_reap(struct sensor_reader *reader)
+/* waitpid owns reaping. Retain the PID until reaped (or ECHILD), never
+ * discard ownership merely because a termination signal was sent. */
+static bool collect_child(struct sensor_reader *reader)
 {
-    if (reader->pid <= 0)
-        return;
     int status;
     pid_t result = waitpid(reader->pid, &status, WNOHANG);
-    if (result == reader->pid || (result < 0 && errno == ECHILD))
+    if (result == reader->pid)
+    {
+        reader->wait_status = status;
+        reader->exited = true;
         reader->pid = 0;
+        return true;
+    }
+    if (result < 0 && errno == ECHILD)
+    {
+        reader->pid = 0;
+        return true;
+    }
+    return false;
+}
+
+void sensor_reap(struct sensor_reader *reader)
+{
+    if (reader->pid > 0)
+        collect_child(reader);
 }
 
 void sensor_stop(struct sensor_reader *reader)
@@ -158,23 +180,16 @@ void sensor_stop(struct sensor_reader *reader)
     if (reader->fd >= 0)
         close(reader->fd);
     reader->fd = -1;
-    if (reader->pid <= 0)
+    if (reader->pid <= 0 || collect_child(reader))
         return;
-    pid_t pid = reader->pid;
-    reader->pid = 0;
-    int status;
-    pid_t waited = waitpid(pid, &status, WNOHANG);
-    if (waited == pid || (waited < 0 && errno == ECHILD))
-        return;
-    kill(pid, SIGTERM);
+    kill(reader->pid, SIGTERM);
     const struct timespec delay = {.tv_nsec = 10000000L};
     for (unsigned int i = 0; i < 100; ++i)
     {
-        pid_t result = waitpid(pid, &status, WNOHANG);
-        if (result == pid || (result < 0 && errno == ECHILD))
+        if (collect_child(reader))
             return;
         if (i == 50)
-            kill(pid, SIGKILL);
+            kill(reader->pid, SIGKILL);
         nanosleep(&delay, NULL);
     }
     fputs("WARN sensor child has not exited; kernel I2C operation may still be pending\n", stderr);

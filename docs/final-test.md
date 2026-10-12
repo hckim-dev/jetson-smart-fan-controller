@@ -12,7 +12,7 @@ make test
 ./build/bmp180-monitor --once
 ```
 
-C8개, CLI29개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
+C9개, CLI29개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
 
 Driver를 변경한 경우 기존 controller를 종료하고 module을 재적재합니다. App만 변경했으면 재적재할 필요가 없습니다. Module이 없으면 `sudo insmod driver/smartfan.ko`를 실행합니다. 적재 실패 이후 그대로 진행하지 않습니다. 현재 DT는 적용돼 있어 추가 GPIO/PWM export·DT 설치·재부팅은 필요 없습니다.
 

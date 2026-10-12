@@ -43,4 +43,8 @@ LF-only parser는 raw PTY에서 CR Enter를 무시하는 결함이 있어CR/LF/C
 
 ## 근거와 원본
 
-주요 commit은 e2da01d(ON/OFF), 11ad335(PWM/LED/LCD), 0cbbf82(BMP/AUTO), adbd04b(EC11/CLI)입니다. 이번 품질개선은 아직 commit하지 않았습니다. 주요 조사 결과와 해결 과정은 이 문서에, 최신 검증 범위는 [quality-review](quality-review.md)에 정리합니다. 과거 원본은 로컬 `docs/history/`에 보존하고 `.gitignore`로 공개 대상에서 제외합니다.
+주요 commit은 e2da01d(ON/OFF), 11ad335(PWM/LED/LCD), 0cbbf82(BMP/AUTO), adbd04b(EC11/CLI)입니다. 품질 개선 기준 commit은 32c9512이며, 이후 6단계의 검증 보강은 별도 변경입니다. 주요 조사 결과와 해결 과정은 이 문서에, 최신 검증 범위는 [quality-review](quality-review.md)에 정리합니다. 과거 원본은 로컬 `docs/history/`에 보존하고 `.gitignore`로 공개 대상에서 제외합니다.
+
+## 6단계 Process/IPC 재검토
+
+센서 process/pipe는 BMP180/AUTO 구현 중 이미 추가했습니다. 6단계 요청에서는 구조를 중복 구현하지 않고 정상 데이터 IPC와 제어 정책, 부모 강제 종료, SIGKILL fallback, fd 격리·회수 테스트를 보강했습니다. 종료 status 진단과 cleanup timeout 후 PID 추적을 개선했습니다. 설계 근거와 실물 확인은 [stage6-process-ipc](stage6-process-ipc.md)에 정리합니다.

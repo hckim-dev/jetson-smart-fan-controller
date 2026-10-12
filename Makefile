@@ -20,11 +20,12 @@ DT_SOURCE := dts/smartfan.dts
 DT_PREPROCESSED := $(BUILD_DIR)/smartfan.preprocessed.dts
 DT_OVERLAY := $(BUILD_DIR)/smartfan.dtbo
 APP_BINARIES := $(APP) $(BUILD_DIR)/encoder-monitor $(BUILD_DIR)/encoder-diagnose $(BUILD_DIR)/bmp180-monitor
-TEST_BINARIES := $(addprefix $(BUILD_DIR)/,test_encoder test_encoder_filter test_encoder_config test_lcd test_bmp180 test_sensor test_auto_guard test_lcd_shutdown)
+TEST_BINARIES := $(addprefix $(BUILD_DIR)/,test_encoder test_encoder_filter test_encoder_config test_lcd test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process)
+PROCESS_FIXTURE := $(BUILD_DIR)/test-bmp180-process
 TEST_CFLAGS = $(CFLAGS) -UNDEBUG
 SAN_CFLAGS = $(TEST_CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
 ANALYSIS_OBJECTS := $(patsubst app/%.c,$(BUILD_DIR)/analysis/%.o,$(wildcard app/*.c))
-SAN_TESTS := $(addprefix $(BUILD_DIR)/sanitizers/,test_encoder test_encoder_filter test_bmp180 test_sensor test_auto_guard test_lcd_shutdown)
+SAN_TESTS := $(addprefix $(BUILD_DIR)/sanitizers/,test_encoder test_encoder_filter test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process)
 DT_HEADERS := $(KDIR)/include/dt-bindings/gpio/tegra234-gpio.h \
 	$(KDIR)/include/dt-bindings/gpio/gpio.h
 
@@ -61,13 +62,19 @@ $(BUILD_DIR)/test_bmp180: tests/test_bmp180.c app/bmp180.c app/bmp180.h app/sens
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -o $@ tests/test_bmp180.c app/bmp180.c app/sensor.c $(LDLIBS)
 
 $(BUILD_DIR)/test_sensor: tests/test_sensor.c app/sensor.c app/sensor.h $(BUILD_DIR)/bmp180-monitor | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=execv -Wl,--wrap=fork -o $@ tests/test_sensor.c app/sensor.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=execv -Wl,--wrap=fork -Wl,--wrap=waitpid -o $@ tests/test_sensor.c app/sensor.c $(LDLIBS)
 
 $(BUILD_DIR)/test_auto_guard: tests/test_auto_guard.c $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h include/smartfan_uapi.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -Wl,--wrap=ioctl -o $@ tests/test_auto_guard.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
 
 $(BUILD_DIR)/test_lcd_shutdown: tests/test_lcd_shutdown.c app/lcd.c app/lcd.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_shutdown.c $(LDLIBS)
+
+$(PROCESS_FIXTURE): tests/bmp180_process_fixture.c app/bmp180-monitor.c app/bmp180.h app/sensor.h Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -o $@ app/bmp180-monitor.c tests/bmp180_process_fixture.c $(LDLIBS)
+
+$(BUILD_DIR)/test_process: tests/test_process.c $(PROCESS_FIXTURE) $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_process.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
 
 module:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" modules
@@ -107,13 +114,16 @@ $(BUILD_DIR)/sanitizers/test_bmp180: tests/test_bmp180.c app/bmp180.c app/bmp180
 	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -o $@ tests/test_bmp180.c app/bmp180.c app/sensor.c $(LDLIBS)
 
 $(BUILD_DIR)/sanitizers/test_sensor: tests/test_sensor.c app/sensor.c app/sensor.h $(BUILD_DIR)/bmp180-monitor Makefile | $(BUILD_DIR)/sanitizers
-	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=execv -Wl,--wrap=fork -o $@ tests/test_sensor.c app/sensor.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=execv -Wl,--wrap=fork -Wl,--wrap=waitpid -o $@ tests/test_sensor.c app/sensor.c $(LDLIBS)
 
 $(BUILD_DIR)/sanitizers/test_lcd_shutdown: tests/test_lcd_shutdown.c app/lcd.c app/lcd.h Makefile | $(BUILD_DIR)/sanitizers
 	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_shutdown.c $(LDLIBS)
 
 $(BUILD_DIR)/sanitizers/test_auto_guard: tests/test_auto_guard.c $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)/sanitizers
 	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -Wl,--wrap=ioctl -o $@ tests/test_auto_guard.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
+
+$(BUILD_DIR)/sanitizers/test_process: tests/test_process.c $(PROCESS_FIXTURE) $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)/sanitizers
+	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_process.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
 
 sanitize: $(SAN_TESTS)
 	./$(BUILD_DIR)/sanitizers/test_encoder
@@ -122,6 +132,7 @@ sanitize: $(SAN_TESTS)
 	./$(BUILD_DIR)/sanitizers/test_sensor
 	./$(BUILD_DIR)/sanitizers/test_auto_guard
 	./$(BUILD_DIR)/sanitizers/test_lcd_shutdown
+	./$(BUILD_DIR)/sanitizers/test_process
 
 test: app $(TEST_BINARIES)
 	./$(BUILD_DIR)/test_encoder
@@ -132,9 +143,10 @@ test: app $(TEST_BINARIES)
 	./$(BUILD_DIR)/test_sensor
 	./$(BUILD_DIR)/test_auto_guard
 	./$(BUILD_DIR)/test_lcd_shutdown
+	./$(BUILD_DIR)/test_process
 	$(PYTHON) tests/test_fanctl.py
 	$(PYTHON) tests/test_build.py
 
 clean:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" clean
-	$(RM) $(APP_BINARIES) $(TEST_BINARIES) $(DT_PREPROCESSED) $(DT_OVERLAY) $(ANALYSIS_OBJECTS) $(SAN_TESTS)
+	$(RM) $(APP_BINARIES) $(TEST_BINARIES) $(PROCESS_FIXTURE) $(DT_PREPROCESSED) $(DT_OVERLAY) $(ANALYSIS_OBJECTS) $(SAN_TESTS)

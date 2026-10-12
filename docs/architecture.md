@@ -72,3 +72,5 @@ Fork caller는 control signal을 잠시 차단합니다. Child는 상속된 main
 Main은50ms poll 주기, heartbeat는 lease/4(최대250ms), sensor는 측정 후 약1초 대기, encoder는 read당최대32events입니다. LCD는 최신 snapshot을 coalesce하고 달라진 행만 전송합니다. 정상 sensor 값은 반복 출력하지 않아 명령 화면을 보존합니다.
 
 현재 규모에서 epoll, 공유 메모리, 추가 daemon 또는 대규모 클래스 구조로 바꿀 근거는 없습니다. `main.c`는 실행 흐름과 자원 수명, `controller.c`는 MANUAL/AUTO 정책과 명령 처리, `fan-device.c`는 ioctl과 dry-run 모델을 담당합니다. 기존 단일 poll 루프와 커널 보호 정책은 유지합니다.
+
+Process 생성·IPC·종료 status 및 회수 지연 시 PID 보존의 상세 검증은 [6단계](stage6-process-ipc.md)를 참조합니다.
