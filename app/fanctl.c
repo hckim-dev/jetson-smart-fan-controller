@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -41,6 +42,8 @@ struct backend
     bool sensor_enabled, have_sample, auto_mode, auto_armed;
     bool auto_rearm_pending, auto_inhibited;
     unsigned int auto_target;
+    unsigned int reported_sensor_state;
+    int reported_sensor_error;
 };
 
 static volatile sig_atomic_t received_signal;
@@ -65,12 +68,23 @@ static bool sensor_fresh(const struct backend *backend)
            now - backend->sample.timestamp_ms < SENSOR_MAX_AGE_MS;
 }
 
-static void print_environment(const struct backend *backend)
+static unsigned int sensor_state(const struct backend *backend)
+{
+    if (!backend->have_sample)
+        return 0;
+    if (backend->sample.error)
+        return 2;
+    return sensor_fresh(backend) ? 1 : 3;
+}
+
+static void print_environment(struct backend *backend)
 {
     printf("MODE %s armed=%u target=%u\n", backend->auto_mode ? "AUTO" : "MANUAL",
            backend->auto_armed, backend->auto_target);
     if (!backend->sensor_enabled)
         return;
+    backend->reported_sensor_state = sensor_state(backend);
+    backend->reported_sensor_error = backend->sample.error;
     if (!backend->have_sample)
         puts("SENSOR pending");
     else if (backend->sample.error)
@@ -81,6 +95,21 @@ static void print_environment(const struct backend *backend)
         printf("SENSOR temperature=%.1fC pressure=%.2fhPa age_ms=%" PRIu64 "\n",
                backend->sample.temperature_mc / 1000.0, backend->sample.pressure_pa / 100.0,
                now_ms() - backend->sample.timestamp_ms);
+}
+
+/* Normal periodic samples update control/LCD silently. Report availability,
+ * faults, recovery and stale transitions once; status always prints values.
+ */
+static bool report_sensor_transition(struct backend *backend)
+{
+    if (!backend->sensor_enabled)
+        return false;
+    unsigned int state = sensor_state(backend);
+    if (state == backend->reported_sensor_state &&
+        (state != 2 || backend->sample.error == backend->reported_sensor_error))
+        return false;
+    print_environment(backend);
+    return true;
 }
 
 static void handle_signal(int signo)
@@ -519,6 +548,7 @@ static int command(struct backend *backend, char *line, bool *known_running,
         line[--length] = '\0';
     if (!length)
         return 0;
+    printf("CMD %s\n", line);
     if (!strcmp(line, "quit"))
         return 1;
     if (!strcmp(line, "help"))
@@ -892,8 +922,8 @@ int main(int argc, char **argv)
             result = EXIT_FAILURE;
             goto cleanup;
         }
-        printf("ENCODER %s S1=%u S2=%u reverse=%u\n", encoder.chip_path,
-               ENCODER_S1_OFFSET, ENCODER_S2_OFFSET, reverse_encoder);
+        printf("ENCODER %s S1=%u S2=%u debounce_us=%u reverse=%u\n", encoder.chip_path,
+               ENCODER_S1_OFFSET, ENCODER_S2_OFFSET, ENCODER_DEBOUNCE_US, reverse_encoder);
     }
     heartbeat_interval = state.lease_ms / 4U;
     if (heartbeat_interval > 250U)
@@ -902,6 +932,12 @@ int main(int argc, char **argv)
         heartbeat_interval = 50U;
     printf("READY lease_ms=%" PRIu32 " max_on_ms=%" PRIu32 "\n",
            (uint32_t)state.lease_ms, (uint32_t)state.max_on_ms);
+    struct termios terminal;
+    if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &terminal) == 0)
+        printf("INPUT tty=1 canonical=%u icrnl=%u eol=CR/LF\n",
+               !!(terminal.c_lflag & ICANON), !!(terminal.c_iflag & ICRNL));
+    else
+        puts("INPUT tty=0 eol=CR/LF");
     print_state(&state);
     known_running = state.running != 0;
 
@@ -932,6 +968,7 @@ int main(int argc, char **argv)
             exit_reason = "error";
             break;
         }
+        report_sensor_transition(&backend);
         if (state.running && now >= next_heartbeat)
         {
             if (backend_heartbeat(&backend) < 0)
@@ -999,12 +1036,10 @@ int main(int argc, char **argv)
                     backend.have_sample = true;
                     close(backend.sensor.fd);
                     backend.sensor.fd = -1;
-                    print_environment(&backend);
                     break;
                 }
                 backend.sample = sample;
                 backend.have_sample = true;
-                print_environment(&backend);
             }
             if (auto_tick(&backend) < 0)
             {
@@ -1075,7 +1110,10 @@ int main(int argc, char **argv)
                 break;
             for (ssize_t i = 0; i < count && !done && !received_signal; ++i)
             {
-                if (bytes[i] == '\n')
+                /* PTYs may pass Enter as CR when ICRNL is disabled. A CRLF
+                 * pair yields an empty second line, never a duplicate command.
+                 */
+                if (bytes[i] == '\n' || bytes[i] == '\r')
                 {
                     if (discarding)
                     {

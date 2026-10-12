@@ -1,5 +1,16 @@
 # 최종 재검토 — 2026-10-08
 
+**현재커밋판정(2026-10-12):** 명령입력과로터리통합실행성공을사용자가확인했다.
+현재소스all/W=1 및C8개/CLI28 tests통과. [커밋전최종검토](commit-review.md)에
+변경전체와남은실물검증을정리했다. 아래는각단계의검토기록이다.
+
+**후속전체점검2026-10-12:** 사용자NPN회로의EC11회전성공을반영해기본debounce
+기간을0으로통합했다. Encoder입력요청, Gray해석, 풍속상하한과0정지, OFF뒤
+회전만으로재시작하지않는정책, AUTO입력충돌, fd/IPC/LCD종료경로를재검토했다.
+추가확정결함은찾지못했다. C8개/CLI27회귀, GCC analyzer8개소스와encoder/filter
+sanitizer검사를통과했다. moduleW=1과offlineDT검사도통과했다.
+로터리를포함한 [최종통합시험](final-test.md)을준비했으며,아래제외문구는이전시점기록이다.
+
 로터리 실물 구현은 다음 주로 제외한다. BMP180/AUTO 통합과 후속 수정에 대해
 코드, 빌드, 회귀 테스트, 현재 실행 환경을 다시 확인했다.
 **발견한 결함은 수정했으며 소프트웨어 검증은 통과했다. 실제 AUTO 통합 시험은
@@ -7,15 +18,15 @@
 
 ## 수정 결과
 
-| 항목 | 원인 / 처리 | 검증 |
-|---|---|---|
+| 항목                            | 원인 / 처리                                                                                                                                       | 검증                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | AUTO 정지 뒤 의도치 않은 재시작 | 상태 GET과 일반 ON 사이에 suspend/만료가 끼어들 수 있었다. 새 SET_AUTO가 같은 kernel mutex 안에서 재시작 차단 상태와 sample freshness를 검사한다. | 조회 사이 보호 정지를 주입하는 mock, 만료 sample, 명시적 rearm, cold update/idle 검사 |
-| 보호 정지 상태 유실 | 일반 OFF/풍속0이 표시 사유를 USER로 바꿔도 auto_inhibited는 유지한다. 명시적인 사용자 ON만 차단을 해제한다. | 소스 검토, AUTO mock 및 최대ON/센서 오류 CLI 회귀 |
-| 구형 module과 새 CLI 혼용 | SMARTFAN_CAP_AUTO가 없으면 AUTO 모드를 거부한다. 일반 ON으로 대체하지 않는다. 기존 MANUAL ABI는 유지한다. | capability 분기/ABI 크기 확인, module build |
-| LCD 종료 대기 | 무제한 join을 CLOCK_MONOTONIC 기준 2초 join으로 변경했다. 실패 시 worker 객체를 보존하고 호출자가 오류로 종료한다. motor fd는 먼저 닫는다. | I²C write를 막는 mock으로 timeout과 객체 수명 검사, ASan/UBSan |
-| LCD control signal 소유 | worker는 SIGINT/SIGTERM/SIGHUP을 차단하고 main의 기존 mask를 복구한다. | worker mask/main mask 회귀 |
-| sensor exec 실패 진단 | child가 exec errno를 IPC error frame으로 전달해 EPIPE만 보이던 문제를 보완했다. | 실제 fork/exec 실패의 ENOTDIR 전달 검사 |
-| sensor partial frame EOF | 완성되지 않은 frame에서 종료하면 EPROTO로 처리한다. | 잘린 frame 회귀 추가 |
+| 보호 정지 상태 유실             | 일반 OFF/풍속0이 표시 사유를 USER로 바꿔도 auto_inhibited는 유지한다. 명시적인 사용자 ON만 차단을 해제한다.                                       | 소스 검토, AUTO mock 및 최대ON/센서 오류 CLI 회귀                                     |
+| 구형 module과 새 CLI 혼용       | SMARTFAN_CAP_AUTO가 없으면 AUTO 모드를 거부한다. 일반 ON으로 대체하지 않는다. 기존 MANUAL ABI는 유지한다.                                         | capability 분기/ABI 크기 확인, module build                                           |
+| LCD 종료 대기                   | 무제한 join을 CLOCK_MONOTONIC 기준 2초 join으로 변경했다. 실패 시 worker 객체를 보존하고 호출자가 오류로 종료한다. motor fd는 먼저 닫는다.        | I²C write를 막는 mock으로 timeout과 객체 수명 검사, ASan/UBSan                        |
+| LCD control signal 소유         | worker는 SIGINT/SIGTERM/SIGHUP을 차단하고 main의 기존 mask를 복구한다.                                                                            | worker mask/main mask 회귀                                                            |
+| sensor exec 실패 진단           | child가 exec errno를 IPC error frame으로 전달해 EPIPE만 보이던 문제를 보완했다.                                                                   | 실제 fork/exec 실패의 ENOTDIR 전달 검사                                               |
+| sensor partial frame EOF        | 완성되지 않은 frame에서 종료하면 EPROTO로 처리한다.                                                                                               | 잘린 frame 회귀 추가                                                                  |
 
 sample_boottime_ms는 절전 시간을 포함한다. Kernel은 PWM 설정 등 잠들 수 있는
 작업 뒤, EN 활성화 직전에도 freshness를 다시 검사한다. 자동 갱신은 rearm=0,

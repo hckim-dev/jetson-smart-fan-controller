@@ -7,7 +7,8 @@
 
 #define ENCODER_S1_OFFSET 50U /* J12 physical 12, PH.07. */
 #define ENCODER_S2_OFFSET 52U /* J12 physical 38, PI.01. */
-#define ENCODER_DEBOUNCE_US 2000U
+/* Tested EC11 + NPN interface uses period 0; clear any previous 1/2ms period. */
+#define ENCODER_DEBOUNCE_US 0U
 #define ENCODER_EVENTS_PER_READ 32U
 
 /* State bit 1 = S1/A; bit 0 = S2/B. CW: 00 -> 10 -> 11 -> 01 -> 00. */

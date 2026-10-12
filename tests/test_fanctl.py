@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """CLI integration checks. Always use dry-run; no kernel or hardware access."""
 
+import os
 import pathlib
+import pty
 import queue
 import signal
 import subprocess
 import threading
 import time
+import tty
 import unittest
 
 CLI = pathlib.Path(__file__).resolve().parents[1] / "build" / "fanctl"
@@ -70,6 +73,45 @@ class Session:
 
 
 class FanctlTests(unittest.TestCase):
+    def test_raw_pty_enter_cr_and_crlf_commands(self):
+        for ending in (b"\r", b"\r\n"):
+            with self.subTest(ending=ending):
+                master, slave = pty.openpty()
+                process = None
+                try:
+                    tty.setraw(slave)  # Enter is not translated to LF.
+                    process = subprocess.Popen(
+                        [str(CLI), "--dry-run", "--bmp180", "--lcd"],
+                        stdin=slave,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    data = ending.join(
+                        [
+                            b"mode manual",
+                            b"speed 5",
+                            b"on",
+                            b"status",
+                            b"off",
+                            b"quit",
+                            b"",
+                        ]
+                    )
+                    os.write(master, data)
+                    output, errors = process.communicate(timeout=3)
+                    self.assertEqual(process.returncode, 0, errors)
+                    self.assertIn(b"INPUT tty=1 canonical=0 icrnl=0", output)
+                    self.assertEqual(output.count(b"CMD on\n"), 1)
+                    self.assertIn(b"STATE ON", output)
+                    self.assertIn(b"SPEED level=5/5 duty=100%", output)
+                    self.assertIn(b"CLOSED state=OFF reason=quit", output)
+                finally:
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                        process.communicate(timeout=3)
+                    os.close(slave)
+                    os.close(master)
+
     def run_input(self, data, *options):
         return subprocess.run(
             [str(CLI), "--dry-run", *options],
@@ -84,6 +126,8 @@ class FanctlTests(unittest.TestCase):
         self.assertIn(b"STATE ON", result.stdout)
         self.assertIn(b"STATE OFF reason=user", result.stdout)
         self.assertIn(b"CLOSED state=OFF reason=quit", result.stdout)
+        self.assertIn(b"CMD on\n", result.stdout)
+        self.assertIn(b"CMD status\n", result.stdout)
 
     def test_eof_stops(self):
         result = self.run_input(b"on\n")
@@ -213,6 +257,29 @@ class FanctlTests(unittest.TestCase):
         self.assertEqual(result.stderr.count(b"ERR speed"), 3)
         self.assertNotIn(b"STATE ON", result.stdout)
         self.assertIn(b"SPEED level=5/5 duty=0%", result.stdout)
+
+    def test_encoder_zero_stops_and_rotation_does_not_restart(self):
+        result = self.run_input(
+            b"speed 1\non\nccw\ncw\nstatus\nquit\n", "--encoder", "--lcd"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count(b"STATE ON"), 1)
+        self.assertIn(b"SPEED level=0/5 duty=0%", result.stdout)
+        self.assertIn(b"SPEED level=1/5 duty=0%", result.stdout)
+        self.assertIn(b"STATE OFF reason=user", result.stdout)
+
+    def test_auto_rejects_encoder_simulation_without_changing_target(self):
+        result = self.run_input(
+            b"temp 27\nmode auto\non\ncw\nccw\nstatus\noff\nquit\n",
+            "--encoder",
+            "--bmp180",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count(b"ERR manual speed/LED controls"), 2)
+        self.assertIn(b"MODE AUTO armed=1 target=2", result.stdout)
+        self.assertIn(b"STATE ON", result.stdout)
+        self.assertNotIn(b"SPEED level=1/5", result.stdout)
+        self.assertNotIn(b"SPEED level=3/5", result.stdout)
 
     def test_led_test_stays_off_and_speed_restores_auto(self):
         result = self.run_input(

@@ -20,17 +20,17 @@ Encoder `5V`와 `103` 저항, WCNLB8-SR12 및 9A331G 9pins를 확인했다.
 
 ## 확인된 자료와 실물 미확인 항목
 
-| 부품 | 자료에서 확인한 내용 | 실물에서 확인할 내용 |
-|---|---|---|
-| Jetson | DT상 P3767-0005 / P3768-0000 | Carrier 실제 모델/revision, J12 pin1 방향, 현재 배선 |
+| 부품          | 자료에서 확인한 내용                                                 | 실물에서 확인할 내용                                                      |
+| ------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Jetson        | DT상 P3767-0005 / P3768-0000                                         | Carrier 실제 모델/revision, J12 pin1 방향, 현재 배선                      |
 | EZ MOTOR R300 | 사진에서 YwRobot/EZ MOTOR R300, 2선 connector 확인; 공식 정격 미확인 | motor 본체 표시·극성·판매처, 정격 전압/정상·기동·stall current, 날개 고정 |
-| L298N | ST IC datasheet 확인 | 모듈 회로, ENA/ENB 및 regulator 점퍼, diode/방열/전원 단자 |
-| Encoder | 사진에서 module 5핀 GND/S1/S2/KEY/+ 확인 | 뒷면 회로, pull-up 및 동작 전압 |
-| LCD | 사진에서 1602A 및 I²C backpack GND/VCC/SDA/SCL 확인; PCF8574는 추정 | chip 문자, pull-up 전압, address strap, expander→LCD pin 연결 |
-| BMP180 | IC 0x77, 온도/기압, 3.3V 계열 사용 가능 | 실제 chip/module, regulator, pull-up 연결 및 VCC 단자 |
-| LED BAR | WCNLB8-SR12 자료상 독립 LED 8개 | 실물과 자료의 동일성, pin1 방향, 색상/극성 |
-| 9A331G | 정확한 제조사·내부 연결 미확인 | pin 수/공통 pin 표시, bussed/isolated 구성, 저항 및 정격 |
-| 모터용 전원 | 미확인 | 출력 전압·전류·극성, current limit, 케이블 용량 |
+| L298N         | ST IC datasheet 확인                                                 | 모듈 회로, ENA/ENB 및 regulator 점퍼, diode/방열/전원 단자                |
+| Encoder       | 사진에서 module 5핀 GND/S1/S2/KEY/+ 확인                             | 뒷면 회로, pull-up 및 동작 전압                                           |
+| LCD           | 사진에서 1602A 및 I²C backpack GND/VCC/SDA/SCL 확인; PCF8574는 추정  | chip 문자, pull-up 전압, address strap, expander→LCD pin 연결             |
+| BMP180        | IC 0x77, 온도/기압, 3.3V 계열 사용 가능                              | 실제 chip/module, regulator, pull-up 연결 및 VCC 단자                     |
+| LED BAR       | WCNLB8-SR12 자료상 독립 LED 8개                                      | 실물과 자료의 동일성, pin1 방향, 색상/극성                                |
+| 9A331G        | 정확한 제조사·내부 연결 미확인                                       | pin 수/공통 pin 표시, bussed/isolated 구성, 저항 및 정격                  |
+| 모터용 전원   | 미확인                                                               | 출력 전압·전류·극성, current limit, 케이블 용량                           |
 
 사진은 모터, L298N, LCD/BMP180/Encoder의 앞뒷면, LED/저항 network 표시,
 Carrier/J12와 현재 배선, 전원 라벨을 우선한다. 모터 라벨/판매처와 전원 정격이 1단계의 가장 큰 선행 조건이다.
@@ -42,8 +42,10 @@ Carrier/J12와 현재 배선, 전원 라벨을 우선한다. 모터 라벨/판�
 실물 Carrier 동일성 확인 전에는 이 값을 사용자 보드의 실측값으로 표현하지 않는다.
 20µA는 논리 출력 전압 보장 조건이며 초과 즉시 손상을 뜻하는 절대 한계가 아니다.
 
-- 일반 GPIO에 외부 pull-up/down을 붙이면 **50kΩ보다 커야 한다**.
-- 지급된 330Ω/1kΩ/4.7kΩ/10kΩ를 일반 GPIO의 직접 pull 저항으로 쓰지 않는다.
+- 일반 GPIO의외부pull저항은통상50kΩ초과를권장한다. TI Rev.L p.3 note D는
+  VOH/VOL변화를허용하면작은값도조건부허용한다. 작은값의전압/구동여유는확인해야한다.
+- 현재EC11 NPN입력회로의컬렉터pull-up1kΩ은사용자회전성공보고와별도전류검토를
+  반영한구성이다. [회로검토](encoder-npn-review.md)를따른다. 이를다른GPIO부하에일반화하지않는다.
 - 모터 전원이나 검증되지 않은 부하를 GPIO에서 구동하지 않는다. LED+저항 직결은 별도로 전류/밝기/전압을 확인한다.
 - `3.3V 논리`만 일치한다고 DC 부하/용량/전원 순서까지 적합한 것은 아니다.
 - I²C SDA/SCL은 TXB GPIO와 별개의 open-drain 연결이다. I²C 전용 level shifter를 사용하며 일반 push-pull buffer로 대체하지 않는다.
@@ -107,20 +109,20 @@ Jetson의 시스템 냉각팬과 이 프로젝트의 외부 선풍기를 구분�
 DT상 Carrier와 로컬 NVIDIA `Jetson/GPIO/gpio_pin_data.py`를 대조했다.
 GPIO 후보들은 `gpioinfo`에서 consumer 없이 보이지만 실제 mux/부팅 초기 전압은 미확인이다.
 
-| J12 물리 pin | 신호 / SoC port | 현재 Linux 식별 | 용도 후보 |
-|---|---|---|---|
-| 1 / 17 | 3.3V supply | GPIO 아님 | 검증된 low-power sensor 논리 전원 |
-| 2 / 4 | 5V supply | GPIO 아님 | 필요·용량 검증 후 logic만; 모터 supply 사용 금지 |
-| 6 | GND | GPIO 아님 | 신호 기준 GND 후보 |
-| 9/14/20/25/30/34/39 | GND | GPIO 아님 | 추가 신호 GND |
-| 32 | GPIO07 / PG.06 | `gpiochip0` offset 41; DT `TEGRA234_MAIN_GPIO(G, 6)` | buffer를 거친 ENA; 정지 interlock 유지 |
-| 15 | GPIO12 / PN.01 | `gpiochip0` offset 85; DT `TEGRA234_MAIN_GPIO(N, 1)` | buffer를 거친 IN1; 1단계 GPIO, 2단계 PWM1 후보 |
-| 29 | GPIO01 / PQ.05 | `gpiochip0` offset 105; DT `TEGRA234_MAIN_GPIO(Q, 5)` | buffer를 거친 IN2; 한 방향 제어 |
-| 7 | GPIO09 / PAC.06 | `gpiochip0` offset 144; DT `TEGRA234_MAIN_GPIO(AC, 6)` | Encoder A 후보 |
-| 31 | GPIO11 / PQ.06 | `gpiochip0` offset 106; DT `TEGRA234_MAIN_GPIO(Q, 6)` | Encoder B 후보 |
-| 3 / 5 | I2C1 SDA / SCL, PDD.02 / PDD.01 | `c250000.i2c` → 현재 `/dev/i2c-7` | BMP180 / 적합성 확인한 LCD bus |
-| 27 / 28 | I2C0 SDA / SCL, PDD.00 / PCC.07 | controller/bus 대응 추가 확인 | 이번 프로젝트에서는 사용하지 않음 |
-| 11 / 36 | UART RTS / CTS | runtime DT `uarta` | 기존 설정 보존, 사용하지 않음 |
+| J12 물리 pin        | 신호 / SoC port                 | 현재 Linux 식별                                        | 용도 후보                                        |
+| ------------------- | ------------------------------- | ------------------------------------------------------ | ------------------------------------------------ |
+| 1 / 17              | 3.3V supply                     | GPIO 아님                                              | 검증된 low-power sensor 논리 전원                |
+| 2 / 4               | 5V supply                       | GPIO 아님                                              | 필요·용량 검증 후 logic만; 모터 supply 사용 금지 |
+| 6                   | GND                             | GPIO 아님                                              | 신호 기준 GND 후보                               |
+| 9/14/20/25/30/34/39 | GND                             | GPIO 아님                                              | 추가 신호 GND                                    |
+| 32                  | GPIO07 / PG.06                  | `gpiochip0` offset 41; DT `TEGRA234_MAIN_GPIO(G, 6)`   | buffer를 거친 ENA; 정지 interlock 유지           |
+| 15                  | GPIO12 / PN.01                  | `gpiochip0` offset 85; DT `TEGRA234_MAIN_GPIO(N, 1)`   | buffer를 거친 IN1; 1단계 GPIO, 2단계 PWM1 후보   |
+| 29                  | GPIO01 / PQ.05                  | `gpiochip0` offset 105; DT `TEGRA234_MAIN_GPIO(Q, 5)`  | buffer를 거친 IN2; 한 방향 제어                  |
+| 7                   | GPIO09 / PAC.06                 | `gpiochip0` offset 144; DT `TEGRA234_MAIN_GPIO(AC, 6)` | Encoder A 후보                                   |
+| 31                  | GPIO11 / PQ.06                  | `gpiochip0` offset 106; DT `TEGRA234_MAIN_GPIO(Q, 6)`  | Encoder B 후보                                   |
+| 3 / 5               | I2C1 SDA / SCL, PDD.02 / PDD.01 | `c250000.i2c` → 현재 `/dev/i2c-7`                      | BMP180 / 적합성 확인한 LCD bus                   |
+| 27 / 28             | I2C0 SDA / SCL, PDD.00 / PCC.07 | controller/bus 대응 추가 확인                          | 이번 프로젝트에서는 사용하지 않음                |
+| 11 / 36             | UART RTS / CTS                  | runtime DT `uarta`                                     | 기존 설정 보존, 사용하지 않음                    |
 
 `gpiochip0` 번호도 부팅 환경에 따라 바뀔 수 있어 chip label/port를 함께 확인한다.
 **cdev line offset과 DT GPIO specifier의 숫자는 같다고 가정하지 않는다.**

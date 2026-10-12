@@ -1,5 +1,44 @@
 # 진행 상태 및 검증 기록
 
+**최종상태(2026-10-12):** 외부tee없이실행하자명령입력이복구됐고--encoder를
+포함한통합실행에서로터리도동작한다고사용자가확인했다. 운영기본기간0,
+BMP출력억제/CMD표시/CRLF지원과진단모드를포함한현재변경을다시검토했다.
+all/W=1, C8개/CLI28검사와변경소스정적분석통과. 커밋을막을추가확정결함은
+없다. [현재커밋검토](commit-review.md)를따른다. LCD대비와전체실물fail-stop
+체크리스트는남아있으며, 아래미확인/미동작표현은각시점의진단이력이다.
+
+**입력원인정정:** 최신motor-check.log는INPUT canonical=1/icrnl=1, CMD없음이었다.
+실제실행의무응답을CR-only파서결함으로확정할수없다. 해당결함의수정과회귀는
+유효하지만사용자증상은계속됐다. sudo1.9.9+외부tee실행경로를우선분리해
+interactive fanctl을파이프없이직접실행하도록최종안내를수정했다.
+sudo/TTY중계가실제원인인지는다음직접실행결과로확인해야한다.
+
+**stdin 파서 보완:** 사용자명령이echo되지만CMD/STATE반응이없는보고를받았다.
+LF만처리하는기존파서에서CR-only Enter를무시하는경로를가상rawPTY로재현했다.
+CR/LF/CRLF를지원하고시작시INPUT termios정보를표시하도록수정했다.
+rawPTY의CR·CRLF각각ON/OFF/quit와중복실행방지검사및C8개/CLI28검사를통과했다.
+실제sudo/tee환경의terminal설정은새INPUT출력으로확인해야하며실물모터기동은
+아직확인하지못했다. LCD송신/백라이트코드는이번수정에서변경되지않았다.
+
+**CLI 출력 보완:** 정상BMPsample마다MODE/SENSOR를반복출력하던동작을제거했다.
+첫유효sample/오류/복구/stale전이만알리고status에서는항상현재값을표시한다.
+CMD로수신명령을기록한다. 정상100 sample의출력억제와전이통지회귀및C8개/
+CLI27검사통과. 사용자ON무회전보고는기존로그에기동명령처리기록이없어
+원인을확정하지않았으며새로그로수신/driver기동/출력경로를구분한다.
+
+**최신: 로터리 통합 최종 점검(2026-10-12).** EC11+NPN(Rb10kΩ/Rc1kΩ) 사용자
+회전성공보고를반영해fanctl과monitor의기본debounce기간을0으로변경했다.
+Gray검사/순서별풍속변경/상하한/정지후명시적재시작/AUTO무시는유지한다.
+C8개/CLI27회귀, GCC analyzer8개소스, encoder/filter ASan/UBSan 및all/W=1,
+offlineDT검증통과. [로터리포함최종실물시험](final-test.md)을준비했다.
+개별부품의기본동작보고와새실행파일의통합시험완료를구분한다. 아래는이전기록이다.
+
+최신 업데이트: 2026-10-12. EC11 정지 로그의 양 채널 지속 변화와 가짜 STEP을
+확인해 encoder-monitor에 IRQ 없는 --stable-us 진단 모드를 추가했다. 실제sample
+간격/gap/필터 통과/방향을 집계하며300us부터 비교한다. C7개/CLI25회귀와 새
+필터 sanitizer 검증을 통과했다. 실물 회전 성공은 아직 미확인이고 fanctl에는
+적용하지 않았다. [다음 시험 명령](encoder-filter-run.md).
+
 업데이트: 2026-10-08 (Asia/Seoul).
 
 ## 현재 단계
@@ -76,17 +115,17 @@ pinconf·debounce·raw sample·IRQ·event를 동시에 수집한다.
 
 **사용자 보고: 1단계 완료 및 commit `e2da01d` 완료. 현재 2단계 설치 완료, Encoder 실물 무응답 조사 중.**
 
-| 항목 | 현재 상태 |
-|---|---|
-| 1단계 ON/OFF | 사용자 완료 보고; GPIO 모터 회전 확인 |
-| Stage2 Driver | PWM1·5단계·startup boost·기존 정지 정책 구현 |
-| Encoder | GPIO v2 두 edge·2ms per-line debounce·Gray decoding·방향 반전 구현 |
-| CLI | speed/up/down, optional encoder, hardware 없는 회전 simulation 구현 |
-| Software test | encoder C unit 및 CLI integration 13개 통과 |
-| Build / offline DT | native app/module/overlay 및 Stage2 boot proposal 검증 |
-| Stage2 실물 | 새 입력 DT/PWM 적용 확인; 사용자는 핀 변경 후에도 회전 무응답 보고. 동시 raw/IRQ/event 기록 대기 |
-| PWM 부하 적합성 | 사진의 M7 flyback diode recovery 규격 및 모터 전류/발열 미확인 |
-| 시스템 변경 / Git | 사용자가 Stage2 설치·load·reboot 수행. 에이전트는 Git staging/commit/push 미수행 |
+| 항목               | 현재 상태                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| 1단계 ON/OFF       | 사용자 완료 보고; GPIO 모터 회전 확인                                                            |
+| Stage2 Driver      | PWM1·5단계·startup boost·기존 정지 정책 구현                                                     |
+| Encoder            | GPIO v2 두 edge·2ms per-line debounce·Gray decoding·방향 반전 구현                               |
+| CLI                | speed/up/down, optional encoder, hardware 없는 회전 simulation 구현                              |
+| Software test      | encoder C unit 및 CLI integration 13개 통과                                                      |
+| Build / offline DT | native app/module/overlay 및 Stage2 boot proposal 검증                                           |
+| Stage2 실물        | 새 입력 DT/PWM 적용 확인; 사용자는 핀 변경 후에도 회전 무응답 보고. 동시 raw/IRQ/event 기록 대기 |
+| PWM 부하 적합성    | 사진의 M7 flyback diode recovery 규격 및 모터 전류/발열 미확인                                   |
+| 시스템 변경 / Git  | 사용자가 Stage2 설치·load·reboot 수행. 에이전트는 Git staging/commit/push 미수행                 |
 
 사용자 Stage2 입력 점검(2026-10-08): live DT `pwm-names=motor`, module/device 존재.
 Encoder monitor는 gpiochip0 offsets144/106을 입력으로 요청했으나 raw level은 1/0 고정,

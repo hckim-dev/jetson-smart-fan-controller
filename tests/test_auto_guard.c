@@ -87,6 +87,31 @@ static void scenario(int32_t temp, bool rearm, bool stale, bool expect_running)
 }
 int main(void)
 {
+    struct backend notices = {.sensor_enabled = true};
+    assert(!report_sensor_transition(&notices));
+    notices.have_sample = true;
+    notices.sample.timestamp_ms = now_ms();
+    notices.sample.temperature_mc = 25000;
+    assert(report_sensor_transition(&notices));
+    for (unsigned int i = 0; i < 100; ++i)
+    {
+        notices.sample.temperature_mc += 1;
+        notices.sample.pressure_pa += 1;
+        notices.sample.timestamp_ms = now_ms();
+        assert(!report_sensor_transition(&notices));
+    }
+    notices.sample.error = EIO;
+    assert(report_sensor_transition(&notices));
+    assert(!report_sensor_transition(&notices));
+    notices.sample.error = ENOTDIR;
+    assert(report_sensor_transition(&notices));
+    notices.sample.error = 0;
+    notices.sample.timestamp_ms = now_ms();
+    assert(report_sensor_transition(&notices));
+    notices.sample.timestamp_ms = now_ms() - SENSOR_MAX_AGE_MS;
+    assert(report_sensor_transition(&notices));
+    assert(!report_sensor_transition(&notices));
+    puts("PASS sensor output: 100 normal samples silent; fault/recovery/stale reported once");
     _Static_assert(sizeof(struct smartfan_auto_request) == 24, "AUTO ABI layout");
     assert(smartfan_auto_sample_fresh(2999, 0));
     assert(!smartfan_auto_sample_fresh(3000, 0));

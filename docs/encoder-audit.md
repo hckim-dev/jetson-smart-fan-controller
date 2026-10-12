@@ -1,23 +1,96 @@
 # Encoder 무응답 조사 — 2026-10-08
 
+## 로터리 통합 최종 점검 — 2026-10-12
+
+실제성공한NPN회로를기준으로fanctl과encoder-monitor의기본debounce기간을0으로
+변경했다. 이전1/2ms가남지않게GPIO요청의period0 attribute는유지한다.
+하드웨어enable비트를직접끄거나MMIO를쓰는수정은하지않았다. Gray전이검사,
+sequence재동기화와최대32event batch는유지한다. [전체실물시험](final-test.md).
+입력요청mock으로default0/양edge/입력전용/CLOEXEC를검증했다. C8개/CLI27 tests,
+encoder/선택filter의ASan/UBSan, userspace8개GCC analyzer, nativeall/moduleW=1,
+offlineDT검사를통과했다. 모터를원격기동하지않았고통합실물완료는아직판정하지않았다.
+
+## 최신 실물 결과 — NPN / 1kΩ 입력 보강
+
+사용자가EC11→B=10kΩ, C→3.3V=1kΩ, E→GND, C→물리12/38의
+NPN회로에서no-debounce 정상회전을보고했다. 아래버퍼확보권고와NPN배제는
+앞선단계기록이다. 작은pull저항의조건부허용과실물결과를반영해재검토했다.
+[현회로전류/전압/선택보완검토](encoder-npn-review.md).
+
+## 최신 조치 — EC11 소프트웨어 필터 진단 준비
+
+보유부품: 사용자NPN만보유/PNP없음, 표기MPS 222A보고. onsemi MPS2222A
+datasheet marking은MPS2/222A 두줄로되어있어해당부품후보와일치한다.
+단순NPN+10k collector pull-up을검증된GPIO해결회로로채택하지않는다.
+NPN만으로push-pull회로가이론적으로불가능하다는뜻은아니며, 현재3.3V/
+부품조건에서검증된양방향구동보완은미완료다.
+[MPS2222/A 제조사자료](https://www.onsemi.com/download/data-sheet/pdf/mps2222-d.pdf).
+
+고정HIGH 시험도10초간raw/accepted/invalid/CW/CCW모두0, A/B=1/1로통과했다.
+LOW/HIGH 고정조건과encoder연결조건의차이가확인돼출력구동/부하등연결시
+전기조건에조사우선순위를둔다. 구체적인고장부품이나전체동적GPIO경로가
+정상임을확정한것은아니다. 보유NPN/PNP의정확한부품명을요청했다.
+
+고정LOW 분리시험은10초간raw/accepted/invalid/CW/CCW모두0, A/B=0/0으로
+통과했다. sample gap51회에서도가짜STEP이없다. 다음은고정HIGH 조건비교이며
+전체GPIO/전기경로가정상이라고확정한결과는아니다.
+
+후속300us 실물시험: raw19319/accepted19143, invalid6260, CW/CCW=0/0.
+초기정지5초에도accepted3203/invalid1074였다. 소프트웨어 필터의 실물시험은
+실패했으며 원인은 아직 미확정이다. 다음은GPIO를공통GND로고정한입력분리시험이다.
+[결과와 정확한 시험 순서](encoder-filter-run.md#300us-실제-결과와-다음-분리-시험).
+
+encoder-idle-1.log는10초간S1/S2=4342/4143회, idle-2는4406/4122회 변화했다.
+clicks 로그에는+STEP2356회, 반대0회가 기록됐으며 CLOSED가 없다.
+정지 시험 지시대로 측정했다면 두 딸깍 위치 모두 불안정하다. 전기적 원인과
+기간0 하드웨어 filter 동작의 영향은 아직 분리하지 못했다.
+
+IRQ 없이 GPIO를 읽는 --stable-us 진단 모드를 추가했다. 샘플 gap에서는 부분
+회전을 버리고 안정된 상태로 다시 시작한다. 출력은 매초 집계하며 raw 입력 변화,
+필터 통과, CW/CCW와 실제 sample 간격을 구분한다. fanctl에는 적용하지 않는다.
+[300/1000/2000us 시험 순서](encoder-filter-run.md)를 따른다.
+
+## 후속 시험 — 2026-10-12
+
+사용자 로그에서 debounce 기간0은 정지 중에도 GPIO 값/edge가 계속 변하고,
+기본2ms는 회전에도 출력이 없다는 결과를 받았다. IRQ 없이 poll-levels에서도
+약5000회 변화했다고 보고했다. 입력 불안정 원인은 아직 확정하지 않았다.
+
+encoder-monitor에 `--debounce-us 0..255000`을 추가했다. 기본값과 fanctl의
+2ms 설정은 유지하며, 이번 시험은1ms를 명시적으로 요청한다.
+
+```sh
+sudo ./build/encoder-monitor --debounce-us 1000 --raw
+```
+
+시작 출력의 `debounce_us=1000` 확인 후 정지5초 → 천천히 양방향 회전 → 정지5초
+순서로 비교한다. 정지 중 EDGE/STEP 증가 여부, 회전 시 STEP 및 종료 통계를 기록한다.
+`--no-debounce` 또는 `--poll-levels`와 명시적 `--debounce-us`는 함께 쓰지 않는다.
+GPIO/PWM 출력, DT 변경, 재부팅은 필요 없다. Build/옵션 검증과 실제 회전 성공은
+구분하며, 1ms 설정이 해결책인지는 사용자의 실물 시험으로 판단한다.
+빌드와 기존 encoder 회귀 테스트를 통과했다. GPIO 접근을 대체한 옵션 검사에서
+정상 입력5건의 값 전달 및 잘못된/충돌 입력11건의 거부를 확인했다.
+
+## 이전 조사 기록
+
 현재 회전 무응답의 단일 원인은 아직 확정하지 못했다. 아래는 코드·live DT·실행
 중인 kernel의 GPIO 요청과 공개 BSP source를 다시 대조한 결과다. 실제 회전과
 동기화되지 않은 짧은 agent 시험을 회전 실패 증거로 사용하지 않는다.
 
 ## 확인한 사실
 
-| 계층 | 확인 결과 | 의미 |
-|---|---|---|
-| 실행 환경 | L4T36.5.2, kernel5.15.199-tegra, gpiochip0=`tegra234-gpio` | 타 플랫폼 예제의 전역 GPIO 번호를 사용하지 않음 |
-| 부팅 | DEFAULT=`smartfan-encoder-alt`; **live DT** encoder-inputs=`soc_gpio41_ph7`, `soc_gpio43_pi1` | 새 12·38번 구성이 실제 적용됨 |
-| DT 입력 속성 | tristate=1, enable-input=1, gpio-mode=0, pull=0 | 입력 의도는 정상. 실제 pad readback은 sudo 진단으로 수집 |
-| Driver bind | `/sys/bus/platform/devices/smartfan/driver`가 smartfan에 연결됨 | consumer의 default pinctrl 적용 경로가 존재 |
-| GPIO mapping | 물리12=PH.07/offset50, 물리38=PI.01/offset52 | 설치된 NVIDIA Jetson.GPIO mapping 및 kernel line 이름과 일치 |
-| IRQ 요청 | 독립 진단 실행 중 GPIO50·52 각각 `Edge smartfan-diag` 등록 | IRQ 등록 누락은 확인되지 않음. 실제 회전 edge 도착 여부는 별도 |
-| 디코더 | 이벤트 수는 Gray decoding/sequence 재동기화보다 **먼저** 증가 | `events=0` 전체를 Gray decoder 버그로 설명할 수 없음 |
-| CLI | event fd를 poll하고 batch당 최대32개 처리, 매 loop lease 관리 | 별도 encoder kernel module이나 PWM 추가 등록은 입력에 불필요 |
-| software 검증 | C encoder tests 및 CLI13 tests 통과 | 실물 pulse 수신을 보장하지는 않음 |
-| 수업 예제와 충돌 | practice의 devtest MMIO 예제 확인, 현재 devtest module/관련 앱 미실행 | 현재 관찰 시점의 예제 코드 동시 구동 근거 없음 |
+| 계층             | 확인 결과                                                                                     | 의미                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 실행 환경        | L4T36.5.2, kernel5.15.199-tegra, gpiochip0=`tegra234-gpio`                                    | 타 플랫폼 예제의 전역 GPIO 번호를 사용하지 않음                |
+| 부팅             | DEFAULT=`smartfan-encoder-alt`; **live DT** encoder-inputs=`soc_gpio41_ph7`, `soc_gpio43_pi1` | 새 12·38번 구성이 실제 적용됨                                  |
+| DT 입력 속성     | tristate=1, enable-input=1, gpio-mode=0, pull=0                                               | 입력 의도는 정상. 실제 pad readback은 sudo 진단으로 수집       |
+| Driver bind      | `/sys/bus/platform/devices/smartfan/driver`가 smartfan에 연결됨                               | consumer의 default pinctrl 적용 경로가 존재                    |
+| GPIO mapping     | 물리12=PH.07/offset50, 물리38=PI.01/offset52                                                  | 설치된 NVIDIA Jetson.GPIO mapping 및 kernel line 이름과 일치   |
+| IRQ 요청         | 독립 진단 실행 중 GPIO50·52 각각 `Edge smartfan-diag` 등록                                    | IRQ 등록 누락은 확인되지 않음. 실제 회전 edge 도착 여부는 별도 |
+| 디코더           | 이벤트 수는 Gray decoding/sequence 재동기화보다 **먼저** 증가                                 | `events=0` 전체를 Gray decoder 버그로 설명할 수 없음           |
+| CLI              | event fd를 poll하고 batch당 최대32개 처리, 매 loop lease 관리                                 | 별도 encoder kernel module이나 PWM 추가 등록은 입력에 불필요   |
+| software 검증    | C encoder tests 및 CLI13 tests 통과                                                           | 실물 pulse 수신을 보장하지는 않음                              |
+| 수업 예제와 충돌 | practice의 devtest MMIO 예제 확인, 현재 devtest module/관련 앱 미실행                         | 현재 관찰 시점의 예제 코드 동시 구동 근거 없음                 |
 
 기존 7·31번은 탈착으로 edge가 발생했으나 회전에는 반응하지 않았다는 사용자
 관찰이 있다. 새 12·38번에서도 무반응이라는 보고를 받았지만, 해당 회전 시점의
@@ -79,14 +152,14 @@ PI1은 bank4/port2/pin1이다. 레지스터 쓰기/DT 변경/출력 GPIO 요청�
 `irq_enable=1`, `output_floated=1`이다. `debounce_enable`과 threshold는
 실제 결과를 읽어 판단한다. pinconf는 위 DT 의도와 대조한다.
 
-| 회전 중 결과 | 다음 조치 |
-|---|---|
-| pinconf의 input/tristate/gpio-mode가 다름 | 실제 pad 적용·다른 consumer의 재설정을 조사하고 해당 state를 수정 |
-| sampled_changes 증가, IRQ/event=0 | GPIO filter/IRQ 전달 경로 우선. 정상 입력을 배선 문제로 단정하지 않음 |
-| IRQ 증가, 독립 진단 event=0 | GPIO cdev 전달 경로/오류 기록 조사 |
-| 독립 진단 event 증가, 기존 monitor만 실패 | 기존 request/read·debounce·decoder 경로를 비교해 수정 |
+| 회전 중 결과                                  | 다음 조치                                                              |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| pinconf의 input/tristate/gpio-mode가 다름     | 실제 pad 적용·다른 consumer의 재설정을 조사하고 해당 state를 수정      |
+| sampled_changes 증가, IRQ/event=0             | GPIO filter/IRQ 전달 경로 우선. 정상 입력을 배선 문제로 단정하지 않음  |
+| IRQ 증가, 독립 진단 event=0                   | GPIO cdev 전달 경로/오류 기록 조사                                     |
+| 독립 진단 event 증가, 기존 monitor만 실패     | 기존 request/read·debounce·decoder 경로를 비교해 수정                  |
 | 양쪽 sampled_changes=0, IRQ/event=0, pad 정상 | controller 이전 입력 경로에 집중. 아래 연결 상태 전압 또는 buffer 비교 |
-| 한 채널만 edge 증가 | 나머지 채널의 pad/신호 경로를 분리 조사 |
+| 한 채널만 edge 증가                           | 나머지 채널의 pad/신호 경로를 분리 조사                                |
 
 1ms sampling은 짧은 pulse를 놓칠 수 있다. event=0과 함께 보더라도 멀티미터나
 오실로스코프 없이 모든 물리 pulse 부재를 증명하지는 않는다.

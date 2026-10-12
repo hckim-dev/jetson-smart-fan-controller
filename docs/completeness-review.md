@@ -1,5 +1,14 @@
 # 완성도 검토 — BMP180 통합 후
 
+**최신:** 파이프없는명령입력및로터리통합동작을사용자가확인했다.
+[커밋전검토](commit-review.md)는현재변경을커밋가능한상태로판정한다.
+LCD대비및전체실물오류/lease/최대ON 검증은별도체크리스트로남는다.
+
+**2026-10-12 후속:** EC11+NPN(Rb10kΩ/Rc1kΩ)에서사용자회전성공을보고받았다.
+기본debounce기간0으로fanctl에통합하고C8개/CLI27회귀검사를통과했다.
+로터리는이제 [최종통합시험](final-test.md)의범위에포함한다. 아래로터리제외/
+보류표현은10월8일검토시점의기록이다. 전체실물합격은통합시험뒤판정한다.
+
 **후속 수정/재검증 완료:** [final-review.md](final-review.md)의 AUTO 경쟁 조건은
 kernel의 원자적 SET_AUTO와 보호 정지 latch로 수정했다. 현재 Kbuild도 정상이며
 module/W=1, C6개/CLI25 tests를 통과했다. LCD 종료2초 join과 sensor exec 진단도
@@ -9,18 +18,18 @@ module/W=1, C6개/CLI25 tests를 통과했다. LCD 종료2초 join과 sensor exe
 아래는 코드·테스트·실물 관찰의 구분이며, 모든 전기 특성이나 장기 내구성 검증을
 완료했다는 뜻은 아니다.
 
-| 요구 기능 | 구현 / 검증 | 남은 실제 확인 |
-|---|---|---|
-| Motor ON/OFF, PWM5단계 | Kernel GPIO/PWM consumer와 CLI. 사용자 회전 성공 보고 | 단계별RPM/전류/발열 정량 측정 |
-| 정지/lease/max-on | Kernel worker, close/remove/PM 정지. CLI 회귀 검증 | 강제종료/절전 실물 조합 시험 |
-| LED Bar | GPIO8개, 시험/자동 표시. 사용자8칸 점등 성공 보고 | 실제 AUTO 풍속 연동 시험 |
-| LCD | 비동기 worker, MANUAL/AUTO·온도·풍속 표시, 행별 갱신. 사용자 문자 표시 보고 | 3.3V에서 대비 부족; AUTO 실제 화면 확인 |
-| BMP180 | 실제온도/기압 + live process IPC 성공. Bosch 보정식 기준값 검증 | 기준 온도계/기압계 대조 |
-| 온도 AUTO | 구간별0~5단계,1°C hysteresis, 명시적 arm/OFF, 센서 오류/stale 정지 | 실제 온도 변화에 따른 모터/LED/LCD 통합 시험 |
-| Multi-process / IPC | fork+exec sensor child,32-byte pipe frame, nonblocking partial reads, signal/waitpid | 반복 실행/센서 탈착 시 실물 확인 |
-| Multi-thread / 동기화 | LCD worker, mutex/condition, 최신 상태 coalescing, motor stop 후 join | LCD 통신 고장 시 실물 확인 |
-| Rotary Encoder | source/decoder/diagnostic 있음 | 실물 입력 무응답, 제외/미완료 |
-| 고급 확장 | watchdog/Qt/자동 process 복구 등 선택 기능 | 이번 요청 범위에 포함하지 않음 |
+| 요구 기능              | 구현 / 검증                                                                          | 남은 실제 확인                               |
+| ---------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Motor ON/OFF, PWM5단계 | Kernel GPIO/PWM consumer와 CLI. 사용자 회전 성공 보고                                | 단계별RPM/전류/발열 정량 측정                |
+| 정지/lease/max-on      | Kernel worker, close/remove/PM 정지. CLI 회귀 검증                                   | 강제종료/절전 실물 조합 시험                 |
+| LED Bar                | GPIO8개, 시험/자동 표시. 사용자8칸 점등 성공 보고                                    | 실제 AUTO 풍속 연동 시험                     |
+| LCD                    | 비동기 worker, MANUAL/AUTO·온도·풍속 표시, 행별 갱신. 사용자 문자 표시 보고          | 3.3V에서 대비 부족; AUTO 실제 화면 확인      |
+| BMP180                 | 실제온도/기압 + live process IPC 성공. Bosch 보정식 기준값 검증                      | 기준 온도계/기압계 대조                      |
+| 온도 AUTO              | 구간별0~5단계,1°C hysteresis, 명시적 arm/OFF, 센서 오류/stale 정지                   | 실제 온도 변화에 따른 모터/LED/LCD 통합 시험 |
+| Multi-process / IPC    | fork+exec sensor child,32-byte pipe frame, nonblocking partial reads, signal/waitpid | 반복 실행/센서 탈착 시 실물 확인             |
+| Multi-thread / 동기화  | LCD worker, mutex/condition, 최신 상태 coalescing, motor stop 후 join                | LCD 통신 고장 시 실물 확인                   |
+| Rotary Encoder         | source/decoder/diagnostic 있음                                                       | 실물 입력 무응답, 제외/미완료                |
+| 고급 확장              | watchdog/Qt/자동 process 복구 등 선택 기능                                           | 이번 요청 범위에 포함하지 않음               |
 
 ## 검토하며 확인/수정한 사항
 

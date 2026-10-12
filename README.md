@@ -2,9 +2,10 @@
 
 Linux Device Driver 기반 Jetson Orin Nano 스마트 선풍기 프로젝트.
 
-현재 상태: **Motor/LED Bar 실물 성공, LCD 문자 표시 확인(대비 부족). BMP180 실제 온도·기압/IPC 측정 성공, AUTO 및 통합 코드 구현 완료. Encoder 실물은 제외/보류.**
+현재 상태: **Motor/LED Bar 실물 성공, BMP180 실측/IPC 성공. EC11은 NPN회로(베이스10kΩ/컬렉터pull-up1kΩ)와 기본 debounce 기간0에서 동작하며, 파이프 없는 통합 실행의 명령 입력·로터리 동작을 사용자가 확인했다. LCD 문자 표시 가능하나 대비 문제는 남아 있다.**
 
 지금 실행할 순서는 [최종 테스트 순서](docs/final-test.md)를 따른다.
+현재 변경의 커밋 판단과 검증 범위는 [커밋 전 검토](docs/commit-review.md)에 정리했다.
 수정 내역과 검증 범위는 [최종 재검토](docs/final-review.md), AUTO 정책은
 [BMP180 / AUTO 실행 안내](docs/bmp180-run.md)에 정리했다.
 기능별 검증과 남은 실물 확인은 [완성도 검토](docs/completeness-review.md)에 정리했다.
@@ -22,9 +23,10 @@ make test
 모터 OFF 상태에서 `led 0`~`led 8`로 점등을 시험하고 `led auto`로 자동 표시에 복귀한다.
 `./build/fanctl --dry-run --lcd`는 LCD 표시 preview도 하드웨어 없이 시험한다.
 `./build/fanctl --dry-run --bmp180 --lcd`에서는 `temp 27`, `mode auto`, `on`,
-`temp error`로 AUTO 동작과 센서 오류 정지를 시연할 수 있다. 실제 구동은
-`sudo ./build/fanctl --bmp180 --lcd --lcd-address 0x27`이며 시작은 MANUAL/OFF다.
-실제 GPIO를 사용하지 않는 CLI 시험이다. 실제 실행은 배선·전원·초기 OFF 검증 후 진행한다.
+`temp error`로 GPIO/I²C 접근 없이 AUTO 동작과 센서 오류 정지를 시연할 수 있다.
+실제 구동은
+`sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27`이며 시작은 MANUAL/OFF다.
+실제 실행은 배선·전원·초기 OFF 검증 후 진행한다.
 
 - [Build / CLI 사용 / 실제 실행 준비](docs/build-run.md)
 - [1단계 종료 확인](docs/stage1-checklist.md)

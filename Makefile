@@ -27,14 +27,20 @@ $(APP): app/fanctl.c app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.
 $(BUILD_DIR)/bmp180-monitor: app/bmp180-monitor.c app/bmp180.c app/bmp180.h app/sensor.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/bmp180-monitor.c app/bmp180.c $(LDLIBS)
 
-$(BUILD_DIR)/encoder-monitor: app/encoder-monitor.c app/encoder.c app/encoder.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/encoder-monitor.c app/encoder.c $(LDLIBS)
+$(BUILD_DIR)/encoder-monitor: app/encoder-monitor.c app/encoder.c app/encoder.h app/encoder-filter.c app/encoder-filter.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/encoder-monitor.c app/encoder.c app/encoder-filter.c $(LDLIBS)
 
 $(BUILD_DIR)/encoder-diagnose: app/encoder-diagnose.c app/encoder.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ app/encoder-diagnose.c $(LDLIBS)
 
 $(BUILD_DIR)/test_encoder: tests/test_encoder.c app/encoder.c app/encoder.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -o $@ tests/test_encoder.c app/encoder.c $(LDLIBS)
+
+$(BUILD_DIR)/test_encoder_filter: tests/test_encoder_filter.c app/encoder-filter.c app/encoder-filter.h app/encoder.c app/encoder.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -o $@ tests/test_encoder_filter.c app/encoder-filter.c app/encoder.c $(LDLIBS)
+
+$(BUILD_DIR)/test_encoder_config: tests/test_encoder_config.c app/encoder.c app/encoder.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=open -Wl,--wrap=ioctl -o $@ tests/test_encoder_config.c app/encoder.c $(LDLIBS)
 
 $(BUILD_DIR)/test_lcd: tests/test_lcd.c app/lcd.c app/lcd.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd.c app/lcd.c $(LDLIBS)
@@ -69,8 +75,10 @@ $(DT_OVERLAY): $(DT_PREPROCESSED)
 $(BUILD_DIR):
 	mkdir -p $@
 
-test: app $(BUILD_DIR)/test_encoder $(BUILD_DIR)/test_lcd $(BUILD_DIR)/test_bmp180 $(BUILD_DIR)/test_sensor $(BUILD_DIR)/test_auto_guard $(BUILD_DIR)/test_lcd_shutdown
+test: app $(BUILD_DIR)/test_encoder $(BUILD_DIR)/test_encoder_filter $(BUILD_DIR)/test_encoder_config $(BUILD_DIR)/test_lcd $(BUILD_DIR)/test_bmp180 $(BUILD_DIR)/test_sensor $(BUILD_DIR)/test_auto_guard $(BUILD_DIR)/test_lcd_shutdown
 	./$(BUILD_DIR)/test_encoder
+	./$(BUILD_DIR)/test_encoder_filter
+	./$(BUILD_DIR)/test_encoder_config
 	./$(BUILD_DIR)/test_lcd
 	./$(BUILD_DIR)/test_bmp180
 	./$(BUILD_DIR)/test_sensor
