@@ -7,6 +7,7 @@ import pty
 import queue
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import tty
@@ -73,6 +74,49 @@ class Session:
 
 
 class FanctlTests(unittest.TestCase):
+    def test_async_log_preserves_cli_and_drains_on_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "events.log"
+            path.write_text("existing\n")
+            with Session(
+                "--bmp180", "--lcd", "--encoder", "--log", str(path)
+            ) as session:
+                session.send("speed 2\non\ncw\nstatus\noff\n")
+                session.expect("CMD off")
+                result, output, errors = session.finish()
+            self.assertEqual(result, 0, errors)
+            self.assertIn("LOG_CLOSED", output)
+            self.assertIn("dropped=0 error=0", output)
+            text = path.read_text()
+            self.assertTrue(text.startswith("existing\n"))
+            for event in ("START", "CMD on", "CMD cw", "CMD off", "STOP reason=quit"):
+                self.assertIn(event, text)
+
+    def test_log_start_failure_rejects_special_files(self):
+        result = subprocess.run(
+            [str(CLI), "--dry-run", "--log", "/dev/null"],
+            input="on\nquit\n",
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("start event log", result.stderr)
+        self.assertNotIn("READY", result.stdout)
+        self.assertNotIn("CMD on", result.stdout)
+
+    def test_log_drains_on_signal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "events.log"
+            with Session("--log", str(path)) as session:
+                session.send("on\n")
+                session.expect("STATE ON")
+                session.process.send_signal(signal.SIGTERM)
+                result, output, errors = session.finish(command=None)
+            self.assertEqual(result, 0, errors)
+            self.assertIn("CLOSED state=OFF reason=signal", output)
+            self.assertIn("STOP reason=signal", path.read_text())
+
     def test_invalid_stdin_rejected_before_resource_open(self):
         for redirect in ("exec 0<&-", "exec 0>/dev/null"):
             with self.subTest(redirect=redirect):

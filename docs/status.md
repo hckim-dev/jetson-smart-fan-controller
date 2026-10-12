@@ -1,6 +1,6 @@
 # 현재 구현·검증 상태
 
-2026-10-12, 1~6단계 기준입니다. 과거 세부 기록은 Git 추적에서 제외한 로컬 보관 자료이며, 주요 개발 과정은 [development](development.md)에 정리했습니다.
+2026-10-12, 1~7단계 기준입니다. 과거 세부 기록은 Git 추적에서 제외한 로컬 보관 자료이며, 주요 개발 과정은 [development](development.md)에 정리했습니다.
 
 | 항목             | 상태                       | 증거 / 남은 내용                                                                               |
 | ---------------- | -------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -22,6 +22,8 @@
 sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 ```
 
-파이프 없는 실행의 명령 입력과 로터리 동작을 확인했습니다. 이후 단계 신규 기능은 추가하지 않았습니다. 이번 개선과 최종 판정은 [quality-review.md](quality-review.md), 재현 검증은 [build-run.md](build-run.md)와 [final-test.md](final-test.md)를 따릅니다.
+파이프 없는 실행의 명령 입력과 로터리 동작을 확인했습니다. 7단계에서는 선택형 로그 worker와 동시성 검증을 추가했습니다. 이번 개선과 최종 판정은 [quality-review.md](quality-review.md), 재현 검증은 [build-run.md](build-run.md)와 [final-test.md](final-test.md)를 따릅니다.
 
 6단계의 구현·검증 보강과 아직 수행하지 않은 실물 프로세스 종료 시험은 [Process/IPC](stage6-process-ipc.md)를 기준으로 합니다.
+
+7단계의 thread 소유권·로그 옵션·검증 한계와 실물 확인은 [stage7-threads](stage7-threads.md)를 따릅니다.

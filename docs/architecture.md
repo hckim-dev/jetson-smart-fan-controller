@@ -74,3 +74,7 @@ Main은50ms poll 주기, heartbeat는 lease/4(최대250ms), sensor는 측정 후
 현재 규모에서 epoll, 공유 메모리, 추가 daemon 또는 대규모 클래스 구조로 바꿀 근거는 없습니다. `main.c`는 실행 흐름과 자원 수명, `controller.c`는 MANUAL/AUTO 정책과 명령 처리, `fan-device.c`는 ioctl과 dry-run 모델을 담당합니다. 기존 단일 poll 루프와 커널 보호 정책은 유지합니다.
 
 Process 생성·IPC·종료 status 및 회수 지연 시 PID 보존의 상세 검증은 [6단계](stage6-process-ipc.md)를 참조합니다.
+
+## 선택형 log worker
+
+`--log PATH`는 main이 제출한 record를 고정 크기 queue에 복사하고, 별도 worker가 파일 I/O를 수행합니다. Queue와 stats는 Mutex로 보호하고 condition으로 통지합니다. Worker는 controller/device 상태를 직접 읽거나 변경하지 않습니다. 센서 fork는 LCD/log thread 생성 전에 수행합니다. Log의 drain/join은 모터 정지와 sensor/LCD cleanup 이후입니다. 자세한 소유권과 timeout 정책은 [7단계](stage7-threads.md)를 따릅니다.

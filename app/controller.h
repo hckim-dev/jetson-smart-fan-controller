@@ -4,6 +4,7 @@
 
 #include <signal.h>
 #include "fan-device.h"
+#include "event-log.h"
 #include "lcd.h"
 #include "sensor.h"
 
@@ -20,6 +21,7 @@ struct controller
 {
     struct fan_device device;
     struct lcd_display *lcd;
+    struct event_log *log;
     struct sensor_reader sensor;
     struct sensor_sample sample;
     bool sensor_enabled, have_sample, auto_mode, auto_armed;

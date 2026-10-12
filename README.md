@@ -2,19 +2,19 @@
 
 Jetson Orin Nano에서 Linux Kernel Driver와 C 사용자 프로그램으로 모터, 로터리 엔코더, LED Bar, LCD, BMP180을 통합한 스마트 선풍기 제어 프로젝트입니다.
 
-단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~6단계이며 이후 단계의 신규 기능은 포함하지 않습니다.
+단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~7단계이며 7단계에서는 선택형 비동기 파일 기록과 동기화 검증을 추가했습니다.
 
 ## 핵심 기능
 
-| 기능            | 구현                                                                     |
-| --------------- | ------------------------------------------------------------------------ |
-| 수동 제어       | ON/OFF, 풍속 0~5, 4ms 요청 PWM(목표250Hz), 저속 기동 시 200ms boost      |
-| 로터리          | GPIO v2 양쪽 edge, Gray 4전이 해석, 방향 반전, 상·하한 제한              |
-| 온도 AUTO       | BMP180 온도에 따른 0~5단계, 하강 경계 1°C hysteresis                     |
-| 출력 표시       | LED Bar 8칸, LCD 16×2 모드·온도·선택 풍속                                |
-| 정지 정책       | 단일 controller, close/오류 정지, heartbeat lease 2초, 연속 ON 30초 제한 |
-| 프로세스/스레드 | 센서 fork/exec + 32-byte pipe IPC, LCD worker + mutex/condition          |
-| 회복 정책       | 센서 fault/stale 또는 보호 정지 뒤에는 명시적인 ON 필요                  |
+| 기능            | 구현                                                                                               |
+| --------------- | -------------------------------------------------------------------------------------------------- |
+| 수동 제어       | ON/OFF, 풍속 0~5, 4ms 요청 PWM(목표250Hz), 저속 기동 시 200ms boost                                |
+| 로터리          | GPIO v2 양쪽 edge, Gray 4전이 해석, 방향 반전, 상·하한 제한                                        |
+| 온도 AUTO       | BMP180 온도에 따른 0~5단계, 하강 경계 1°C hysteresis                                               |
+| 출력 표시       | LED Bar 8칸, LCD 16×2 모드·온도·선택 풍속                                                          |
+| 정지 정책       | 단일 controller, close/오류 정지, heartbeat lease 2초, 연속 ON 30초 제한                           |
+| 프로세스/스레드 | 센서 fork/exec + 32-byte pipe IPC, LCD worker + mutex/condition, 선택형 log worker + bounded queue |
+| 회복 정책       | 센서 fault/stale 또는 보호 정지 뒤에는 명시적인 ON 필요                                            |
 
 ```mermaid
 flowchart LR
@@ -62,6 +62,7 @@ sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 - [현재 하드웨어·핀 연결·전원 한계](docs/hardware.md)
 - [빌드·실행·개발 검증](docs/build-run.md)
 - [통합 실물 테스트](docs/final-test.md)
+- [7단계 Thread/동기화와 로그](docs/stage7-threads.md)
 - [6단계 Process/IPC 설계와 검증](docs/stage6-process-ipc.md)
 - [개발 과정과 문제 해결](docs/development.md)
 - [발표·포트폴리오용 설명](docs/portfolio.md)

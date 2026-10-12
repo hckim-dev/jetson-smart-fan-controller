@@ -32,10 +32,15 @@ class BuildTests(unittest.TestCase):
                 "encoder-monitor",
                 "test_sensor",
                 "test_process",
+                "test_event_log",
+                "test_lcd_concurrency",
+                "threads/test_event_log",
+                "threads/test_lcd_concurrency",
                 "test-bmp180-process",
                 "smartfan.dtbo",
             ]
             for name in kept + removed:
+                (build / name).parent.mkdir(parents=True, exist_ok=True)
                 (build / name).write_text("sentinel\n")
             result = subprocess.run(
                 ["make", "clean", f"KDIR={kernel}"],

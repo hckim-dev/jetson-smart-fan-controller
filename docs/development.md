@@ -9,6 +9,7 @@
 | 3. LCD           | PCF8574 4bit 초기화, worker, 모드/온도/풍속             | protocol/mock tests, 사용자 문자 표시(대비 미해결)         |
 | 4. LED Bar       | optional GPIO8개, 독립시험/풍속연동                     | level mapping tests, 사용자8칸 점등                        |
 | 5. BMP180/AUTO   | calibration/보정식, hysteresis, fault/stale stop        | Bosch 예제와 실제I²C/IPC, AUTO 회귀 및 사용자정지/복구보고 |
+| 7. Thread/Sync   | LCD snapshot worker, 선택형 파일 log queue/worker       | concurrent producers/snapshots, sanitizer 및 CLI 로그 검증 |
 | 6. Process/IPC   | sensor fork/exec/pipe/waitpid/signals                   | partial IPC/exec 오류/수명 tests, 실제child sample         |
 
 구현 순서는 전기 조건과 실물 확인에 맞춰 조정했습니다. Motor→PWM→LED→LCD→BMP/AUTO/IPC를 진행하고, 미해결 EC11 입력을 마지막에 NPN 회로로 보강했습니다. LCD I/O를 main에서 분리하기 위한 thread는 이미 구현된 구조이며 별도의 다음 단계 확장을 추가한 것이 아닙니다.
@@ -48,3 +49,7 @@ LF-only parser는 raw PTY에서 CR Enter를 무시하는 결함이 있어CR/LF/C
 ## 6단계 Process/IPC 재검토
 
 센서 process/pipe는 BMP180/AUTO 구현 중 이미 추가했습니다. 6단계 요청에서는 구조를 중복 구현하지 않고 정상 데이터 IPC와 제어 정책, 부모 강제 종료, SIGKILL fallback, fd 격리·회수 테스트를 보강했습니다. 종료 status 진단과 cleanup timeout 후 PID 추적을 개선했습니다. 설계 근거와 실물 확인은 [stage6-process-ipc](stage6-process-ipc.md)에 정리합니다.
+
+## 7단계 필요한 작업만 thread로 분리
+
+모터/모드 상태는 단일 main owner로 유지하고 sensor process도 보존했습니다. Blocking 파일 기록만 선택형 worker로 추가하고 bounded queue, overflow accounting, signal mask, 종료 drain과 live object 수명을 검증했습니다. 설계와 한계는 [7단계](stage7-threads.md)에 기록했습니다.

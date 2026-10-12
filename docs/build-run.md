@@ -17,15 +17,15 @@ make test
 
 ## 개발 검증
 
-| 명령              | 범위                                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| `make app`        | C 사용자 프로그램4개                                                                     |
-| `make module W=1` | matching kernel module, 추가 compiler 검사                                               |
-| `make dt`         | overlay compile                                                                          |
-| `make test`       | C9개 + CLI29개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                 |
-| `make analyze`    | GCC analyzer, 사용자 소스11개                                                            |
-| `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown/process의 ASan/UBSan7개 |
-| `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존                   |
+| 명령              | 범위                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| `make app`        | C 사용자 프로그램4개                                                                                      |
+| `make module W=1` | matching kernel module, 추가 compiler 검사                                                                |
+| `make dt`         | overlay compile                                                                                           |
+| `make test`       | C11개 + CLI32개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                                 |
+| `make analyze`    | GCC analyzer, 사용자 소스12개                                                                             |
+| `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown/process/log/LCD snapshot의 ASan/UBSan9개 |
+| `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존                                    |
 
 CC/CFLAGS/LDFLAGS/LDLIBS를 지정할 수 있습니다. C11/Wall/Wextra/Wpedantic/Werror는 유지하며 test에서는 NDEBUG를 해제해 assert 검사가 사라지지 않게 합니다. Makefile 변경도 binary 의존성에 포함합니다. `analyze`는 GCC의 -fanalyzer가 있는 compiler를 사용합니다.
 
@@ -82,3 +82,5 @@ bash scripts/install-dt.sh --check
 - AUTO capability 오류는 현재 driver가 적재됐는지 확인합니다. 구형 driver에 일반 ON으로 우회하지 않습니다.
 - BMP helper 오류가 있으면 별도 `./build/bmp180-monitor --once`로 검사합니다. 통합 실행의 센서와 동시에 실행하지 않습니다.
 - LCD 주소/100kHz 조건은 실제 확인한 값을 사용합니다. LCD 실패는 warning으로 알리며 motor control은 계속됩니다.
+
+`make thread-check`는 GCC ThreadSanitizer로 log producer/consumer와 LCD snapshot 동기화를 검사합니다. 파일 기록 옵션과 테스트 범위는 [7단계](stage7-threads.md)를 참고합니다.

@@ -49,6 +49,7 @@ static void usage(FILE *out, const char *program)
                  "       [--bmp180 [--sensor-bus /dev/i2c-7]]\n"
                  "Sensor commands: mode manual, mode auto; temp N/error (dry-run only).\n"
                  "Dry-run encoder simulation: cw, ccw (requires --encoder).\n"
+                 "       [--log PATH] (append-only asynchronous event log)\n"
                  "Keep this foreground process open while the fan is ON.\n",
             program);
 }
@@ -68,6 +69,7 @@ int main(int argc, char **argv)
         {"lcd-address", required_argument, NULL, 'A'},
         {"bmp180", no_argument, NULL, 'S'},
         {"sensor-bus", required_argument, NULL, 'I'},
+        {"log", required_argument, NULL, 'g'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -79,7 +81,8 @@ int main(int argc, char **argv)
     struct encoder_input encoder = {.fd = -1};
     bool encoder_enabled = false, reverse_encoder = false;
     bool lcd_enabled = false, lcd_bus_selected = false, lcd_address_selected = false;
-    bool lcd_warned = false;
+    bool lcd_warned = false, log_warned = false;
+    const char *log_path = NULL;
     const char *lcd_bus = "/dev/i2c-7";
     unsigned int lcd_address = 0x27;
     const char *sensor_bus = "/dev/i2c-7";
@@ -160,6 +163,9 @@ int main(int argc, char **argv)
             lcd_address_selected = true;
             break;
         }
+        case 'g':
+            log_path = optarg;
+            break;
         case 'h':
             usage(stdout, argv[0]);
             return EXIT_SUCCESS;
@@ -167,7 +173,7 @@ int main(int argc, char **argv)
             goto invalid_options;
         }
     }
-    if (optind != argc || (controller.device.dry_run && device_selected) ||
+    if ((log_path && !log_path[0]) || optind != argc || (controller.device.dry_run && device_selected) ||
         (!controller.device.dry_run && timeout_selected) ||
         controller.device.state.lease_ms > controller.device.state.max_on_ms ||
         (!encoder_enabled && (encoder_chip || reverse_encoder)) ||
@@ -256,6 +262,19 @@ int main(int argc, char **argv)
         }
         printf("SENSOR_PROCESS pid=%ld bus=%s address=0x77\n", (long)controller.sensor.pid, sensor_bus);
     }
+    /* Fork the sensor before creating any worker threads. */
+    if (log_path)
+    {
+        if (event_log_start(&controller.log, log_path) < 0)
+        {
+            perror("start event log");
+            result = EXIT_FAILURE;
+            goto cleanup;
+        }
+        puts("LOG enabled=1 queue_capacity=128");
+        event_log_submit(controller.log, "START dry_run=%u sensor=%u encoder=%u lcd=%u",
+                         controller.device.dry_run, controller.sensor_enabled, encoder_enabled, lcd_enabled);
+    }
     if (lcd_enabled)
     {
         if (lcd_start(&controller.lcd, lcd_bus, lcd_address, controller.device.dry_run) < 0)
@@ -326,6 +345,7 @@ int main(int argc, char **argv)
                 printf("SENSOR_EXIT pid=%ld exit_code=%d\n", (long)sensor_pid, WEXITSTATUS(status));
             else if (WIFSIGNALED(status))
                 printf("SENSOR_EXIT pid=%ld signal=%d\n", (long)sensor_pid, WTERMSIG(status));
+            event_log_submit(controller.log, "SENSOR_EXIT pid=%ld wait_status=%d", (long)sensor_pid, status);
             sensor_exit_reported = true;
         }
         if (fan_device_get(&controller.device, &state) < 0)
@@ -336,7 +356,18 @@ int main(int argc, char **argv)
             break;
         }
         if (known_running && !state.running)
+        {
+            event_log_submit(controller.log, "MOTOR_STOP reason=%u", (unsigned int)state.stop_reason);
             controller_print_state(&state);
+        }
+        struct event_log_stats log_stats;
+        event_log_snapshot(controller.log, &log_stats);
+        if (!log_warned && (log_stats.error || log_stats.dropped))
+        {
+            fprintf(stderr, "WARN LOG error=%d dropped=%" PRIu64 "; motor control continues\n",
+                    log_stats.error, log_stats.dropped);
+            log_warned = true;
+        }
         known_running = state.running != 0;
         if (controller_auto_tick(&controller) < 0)
         {
@@ -550,6 +581,19 @@ cleanup:
     {
         fprintf(stderr, "WARN LCD shutdown: %s; motor fd already closed\n", strerror(lcd_cleanup_error));
         result = EXIT_FAILURE;
+    }
+    if (controller.log)
+    {
+        struct event_log_stats stats;
+        event_log_submit(controller.log, "STOP reason=%s result=%d", received_signal ? "signal" : exit_reason, result);
+        int error = event_log_finish(controller.log, &stats);
+        printf("LOG_CLOSED written=%" PRIu64 " dropped=%" PRIu64 " error=%d\n",
+               stats.written, stats.dropped, error);
+        if (error)
+        {
+            fprintf(stderr, "WARN LOG shutdown: %s; motor fd already closed\n", strerror(error));
+            result = EXIT_FAILURE;
+        }
     }
     /* Block our handlers before closing their write fd to avoid fd reuse races. */
     sigset_t block;

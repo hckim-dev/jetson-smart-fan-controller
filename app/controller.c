@@ -57,6 +57,7 @@ bool controller_report_sensor_transition(struct controller *controller)
     if (state == controller->reported_sensor_state &&
         (state != SENSOR_ERROR || controller->sample.error == controller->reported_sensor_error))
         return false;
+    event_log_submit(controller->log, "SENSOR health=%d error=%d", (int)state, controller->sample.error);
     print_environment(controller);
     return true;
 }
@@ -103,6 +104,11 @@ int controller_print_speed(struct controller *controller)
         return -1;
     printf("LEDBAR available=%u mode=%s count=%u/8\n", (unsigned int)leds.available,
            leds.mode == SMARTFAN_LED_TEST ? "test" : "auto", (unsigned int)leds.count);
+    event_log_submit(controller->log, "STATE mode=%s armed=%u level=%u duty=%u leds=%u sensor_valid=%u temp_mc=%" PRId32 " pressure_pa=%" PRId32,
+                     controller->auto_mode ? "AUTO" : "MANUAL", controller->auto_armed,
+                     (unsigned int)speed.level, (unsigned int)speed.duty_percent, (unsigned int)leds.count,
+                     controller->sensor_enabled && controller_sensor_fresh(controller),
+                     controller->sample.temperature_mc, controller->sample.pressure_pa);
     print_environment(controller);
     if (controller->lcd)
     {
@@ -130,6 +136,7 @@ int controller_auto_tick(struct controller *controller)
             controller->auto_rearm_pending = false;
             if (fan_device_set(&controller->device, false) < 0)
                 return -1;
+            event_log_submit(controller->log, "AUTO_STOP reason=sensor_fault_or_stale");
             puts("AUTO STOP reason=sensor_fault_or_stale; explicit ON required");
             return controller_print_speed(controller);
         }
@@ -145,6 +152,7 @@ int controller_auto_tick(struct controller *controller)
          state.stop_reason == SMARTFAN_STOP_SENSOR))
     {
         controller->auto_armed = false;
+        event_log_submit(controller->log, "AUTO_STOP reason=driver_limit");
         puts("AUTO STOP reason=driver_limit; explicit ON required");
         return 0;
     }
@@ -159,6 +167,7 @@ int controller_auto_tick(struct controller *controller)
             if (errno == ECANCELED || errno == ESTALE || errno == EHOSTDOWN)
             {
                 controller->auto_armed = false;
+                event_log_submit(controller->log, "AUTO_STOP reason=atomic_guard");
                 puts("AUTO STOP reason=atomic_guard; explicit ON required");
                 return 0;
             }
@@ -229,6 +238,7 @@ int controller_command(struct controller *controller, char *line, bool *known_ru
         line[--length] = '\0';
     if (!length)
         return 0;
+    event_log_submit(controller->log, "CMD %s", line);
     printf("CMD %s\n", line);
     if (!strcmp(line, "quit"))
         return 1;
@@ -365,6 +375,8 @@ int controller_command(struct controller *controller, char *line, bool *known_ru
     }
     if (controller_auto_tick(controller) < 0 || fan_device_get(&controller->device, &state) < 0)
         return -1;
+    event_log_submit(controller->log, "RESULT running=%u stop_reason=%u",
+                     (unsigned int)state.running, (unsigned int)state.stop_reason);
     *known_running = state.running != 0;
     controller_print_state(&state);
     return controller_print_speed(controller);

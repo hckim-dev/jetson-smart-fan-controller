@@ -13,23 +13,24 @@ override CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 
 BUILD_DIR := build
 APP := $(BUILD_DIR)/fanctl
-CONTROL_SOURCES := app/controller.c app/fan-device.c
-CONTROL_HEADERS := app/controller.h app/fan-device.h
+CONTROL_SOURCES := app/controller.c app/fan-device.c app/event-log.c
+CONTROL_HEADERS := app/controller.h app/fan-device.h app/event-log.h
 APP_SOURCES := app/main.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c
 DT_SOURCE := dts/smartfan.dts
 DT_PREPROCESSED := $(BUILD_DIR)/smartfan.preprocessed.dts
 DT_OVERLAY := $(BUILD_DIR)/smartfan.dtbo
 APP_BINARIES := $(APP) $(BUILD_DIR)/encoder-monitor $(BUILD_DIR)/encoder-diagnose $(BUILD_DIR)/bmp180-monitor
-TEST_BINARIES := $(addprefix $(BUILD_DIR)/,test_encoder test_encoder_filter test_encoder_config test_lcd test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process)
+TEST_BINARIES := $(addprefix $(BUILD_DIR)/,test_encoder test_encoder_filter test_encoder_config test_lcd test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process test_event_log test_lcd_concurrency)
 PROCESS_FIXTURE := $(BUILD_DIR)/test-bmp180-process
 TEST_CFLAGS = $(CFLAGS) -UNDEBUG
 SAN_CFLAGS = $(TEST_CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
 ANALYSIS_OBJECTS := $(patsubst app/%.c,$(BUILD_DIR)/analysis/%.o,$(wildcard app/*.c))
-SAN_TESTS := $(addprefix $(BUILD_DIR)/sanitizers/,test_encoder test_encoder_filter test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process)
+SAN_TESTS := $(addprefix $(BUILD_DIR)/sanitizers/,test_encoder test_encoder_filter test_bmp180 test_sensor test_auto_guard test_lcd_shutdown test_process test_event_log test_lcd_concurrency)
+THREAD_TESTS := $(BUILD_DIR)/threads/test_event_log $(BUILD_DIR)/threads/test_lcd_concurrency
 DT_HEADERS := $(KDIR)/include/dt-bindings/gpio/tegra234-gpio.h \
 	$(KDIR)/include/dt-bindings/gpio/gpio.h
 
-.PHONY: all app module dt prepare-dt test analyze sanitize clean
+.PHONY: all app module dt prepare-dt test analyze sanitize thread-check clean
 all: app module dt
 
 app: $(APP_BINARIES)
@@ -76,6 +77,12 @@ $(PROCESS_FIXTURE): tests/bmp180_process_fixture.c app/bmp180-monitor.c app/bmp1
 $(BUILD_DIR)/test_process: tests/test_process.c $(PROCESS_FIXTURE) $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_process.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
 
+$(BUILD_DIR)/test_event_log: tests/test_event_log.c app/event-log.c app/event-log.h Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -Wl,--wrap=write -Wl,--wrap=pthread_create -o $@ tests/test_event_log.c app/event-log.c $(LDLIBS)
+
+$(BUILD_DIR)/test_lcd_concurrency: tests/test_lcd_concurrency.c app/lcd.c app/lcd.h Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_concurrency.c $(LDLIBS)
+
 module:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" modules
 
@@ -96,7 +103,7 @@ $(BUILD_DIR):
 
 $(APP_BINARIES) $(TEST_BINARIES): Makefile
 
-$(BUILD_DIR)/analysis $(BUILD_DIR)/sanitizers:
+$(BUILD_DIR)/analysis $(BUILD_DIR)/sanitizers $(BUILD_DIR)/threads:
 	mkdir -p $@
 
 $(BUILD_DIR)/analysis/%.o: app/%.c $(wildcard app/*.h) include/smartfan_uapi.h Makefile | $(BUILD_DIR)/analysis
@@ -125,6 +132,12 @@ $(BUILD_DIR)/sanitizers/test_auto_guard: tests/test_auto_guard.c $(CONTROL_SOURC
 $(BUILD_DIR)/sanitizers/test_process: tests/test_process.c $(PROCESS_FIXTURE) $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)/sanitizers
 	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_process.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
 
+$(BUILD_DIR)/sanitizers/test_event_log: tests/test_event_log.c app/event-log.c app/event-log.h Makefile | $(BUILD_DIR)/sanitizers
+	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -Wl,--wrap=write -Wl,--wrap=pthread_create -o $@ tests/test_event_log.c app/event-log.c $(LDLIBS)
+
+$(BUILD_DIR)/sanitizers/test_lcd_concurrency: tests/test_lcd_concurrency.c app/lcd.c app/lcd.h Makefile | $(BUILD_DIR)/sanitizers
+	$(CC) $(CPPFLAGS) $(SAN_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_concurrency.c $(LDLIBS)
+
 sanitize: $(SAN_TESTS)
 	./$(BUILD_DIR)/sanitizers/test_encoder
 	./$(BUILD_DIR)/sanitizers/test_encoder_filter
@@ -133,6 +146,18 @@ sanitize: $(SAN_TESTS)
 	./$(BUILD_DIR)/sanitizers/test_auto_guard
 	./$(BUILD_DIR)/sanitizers/test_lcd_shutdown
 	./$(BUILD_DIR)/sanitizers/test_process
+	./$(BUILD_DIR)/sanitizers/test_event_log
+	./$(BUILD_DIR)/sanitizers/test_lcd_concurrency
+
+$(BUILD_DIR)/threads/test_event_log: tests/test_event_log.c app/event-log.c app/event-log.h Makefile | $(BUILD_DIR)/threads
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -O1 -g -fsanitize=thread -Iapp $(LDFLAGS) -pthread -Wl,--wrap=write -Wl,--wrap=pthread_create -o $@ tests/test_event_log.c app/event-log.c $(LDLIBS)
+
+$(BUILD_DIR)/threads/test_lcd_concurrency: tests/test_lcd_concurrency.c app/lcd.c app/lcd.h Makefile | $(BUILD_DIR)/threads
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -O1 -g -fsanitize=thread -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_concurrency.c $(LDLIBS)
+
+thread-check: $(THREAD_TESTS)
+	./$(BUILD_DIR)/threads/test_event_log
+	./$(BUILD_DIR)/threads/test_lcd_concurrency
 
 test: app $(TEST_BINARIES)
 	./$(BUILD_DIR)/test_encoder
@@ -144,9 +169,11 @@ test: app $(TEST_BINARIES)
 	./$(BUILD_DIR)/test_auto_guard
 	./$(BUILD_DIR)/test_lcd_shutdown
 	./$(BUILD_DIR)/test_process
+	./$(BUILD_DIR)/test_event_log
+	./$(BUILD_DIR)/test_lcd_concurrency
 	$(PYTHON) tests/test_fanctl.py
 	$(PYTHON) tests/test_build.py
 
 clean:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" clean
-	$(RM) $(APP_BINARIES) $(TEST_BINARIES) $(PROCESS_FIXTURE) $(DT_PREPROCESSED) $(DT_OVERLAY) $(ANALYSIS_OBJECTS) $(SAN_TESTS)
+	$(RM) $(APP_BINARIES) $(TEST_BINARIES) $(PROCESS_FIXTURE) $(DT_PREPROCESSED) $(DT_OVERLAY) $(ANALYSIS_OBJECTS) $(SAN_TESTS) $(THREAD_TESTS)

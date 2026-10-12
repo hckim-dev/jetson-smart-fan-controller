@@ -8,14 +8,14 @@
 
 ## 기술적으로 설명할 기여
 
-| 주제            | 설명할 구현 / 판단                                                                        |
-| --------------- | ----------------------------------------------------------------------------------------- |
-| Linux driver    | platform binding, devm GPIO/PWM, miscdevice, fixed-width UAPI, kref/removed gate          |
-| 동시성          | kernel mutex/workqueue, LCD mutex/condition, signal self-pipe, fork 전후 signal mask      |
-| 제어 정책       | MANUAL/AUTO 책임 분리, hysteresis, protected-stop latch, BOOTTIME freshness               |
-| IPC             | partial stream read, framing/sequence/error validation, exec error frame, bounded cleanup |
-| 하드웨어 디버깅 | pinmux readback, raw IRQ/level 비교, 고정LOW/HIGH 시험, NPN 입력 보강                     |
-| 검증            | C/mock tests, Python CLI/PTY tests, ASan/UBSan, GCC analyzer, clean 데이터 보존 테스트    |
+| 주제            | 설명할 구현 / 판단                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Linux driver    | platform binding, devm GPIO/PWM, miscdevice, fixed-width UAPI, kref/removed gate                                      |
+| 동시성          | kernel mutex/workqueue, LCD snapshot 및 선택형 log queue의 mutex/condition, signal self-pipe, fork 전후 signal mask   |
+| 제어 정책       | MANUAL/AUTO 책임 분리, hysteresis, protected-stop latch, BOOTTIME freshness                                           |
+| IPC             | partial stream read, framing/sequence/error validation, exec error frame, bounded cleanup                             |
+| 하드웨어 디버깅 | pinmux readback, raw IRQ/level 비교, 고정LOW/HIGH 시험, NPN 입력 보강                                                 |
+| 검증            | C/mock tests, Python CLI/PTY tests, ASan/UBSan, ThreadSanitizer 스트레스 검사, GCC analyzer, clean 데이터 보존 테스트 |
 
 ## 발표 흐름 예시
 
