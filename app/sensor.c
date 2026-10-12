@@ -30,10 +30,28 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
     snprintf(parent, sizeof(parent), "%ld", (long)getpid());
     if (pipe2(pipefd, O_CLOEXEC) < 0)
         return -1;
+    /* Block control signals in the fork caller until the child has replaced
+     * inherited controller handlers. Otherwise an early SIGTERM can invoke
+     * the parent's flag/self-pipe handler and be lost before exec.
+     */
+    sigset_t controls, previous_mask;
+    sigemptyset(&controls);
+    sigaddset(&controls, SIGINT);
+    sigaddset(&controls, SIGTERM);
+    sigaddset(&controls, SIGHUP);
+    if (sigprocmask(SIG_BLOCK, &controls, &previous_mask) < 0)
+    {
+        int error = errno;
+        close(pipefd[0]);
+        close(pipefd[1]);
+        errno = error;
+        return -1;
+    }
     pid_t pid = fork();
     if (pid < 0)
     {
         int error = errno;
+        sigprocmask(SIG_SETMASK, &previous_mask, NULL);
         close(pipefd[0]);
         close(pipefd[1]);
         errno = error;
@@ -45,6 +63,17 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
          * occur before exec. All controller/I2C descriptors are CLOEXEC.
          */
         close(pipefd[0]);
+        struct sigaction action = {.sa_handler = SIG_DFL};
+        sigemptyset(&action.sa_mask);
+        if (sigaction(SIGINT, &action, NULL) < 0 ||
+            sigaction(SIGTERM, &action, NULL) < 0 ||
+            sigaction(SIGHUP, &action, NULL) < 0)
+            _exit(126);
+        sigdelset(&previous_mask, SIGINT);
+        sigdelset(&previous_mask, SIGTERM);
+        sigdelset(&previous_mask, SIGHUP);
+        if (sigprocmask(SIG_SETMASK, &previous_mask, NULL) < 0)
+            _exit(126);
         if (dup2(pipefd[1], STDOUT_FILENO) < 0)
             _exit(126);
         if (fcntl(STDOUT_FILENO, F_SETFD, 0) < 0)
@@ -57,16 +86,24 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
         /* exec failure is still a valid IPC error frame; no unsafe stdio
          * after fork, and no ambiguous EOF-only diagnosis in the parent.
          */
-        struct sensor_sample failure = {.magic = SENSOR_MAGIC, .sequence = 1,
-                                        .error = errno};
+        struct sensor_sample failure = {.magic = SENSOR_MAGIC, .sequence = 1, .error = errno};
         ssize_t written;
-        do { written = write(STDOUT_FILENO, &failure, sizeof(failure)); }
-        while (written < 0 && errno == EINTR);
+        do
+        {
+            written = write(STDOUT_FILENO, &failure, sizeof(failure));
+        } while (written < 0 && errno == EINTR);
         _exit(127);
     }
     close(pipefd[1]);
     reader->fd = pipefd[0];
     reader->pid = pid;
+    if (sigprocmask(SIG_SETMASK, &previous_mask, NULL) < 0)
+    {
+        int error = errno;
+        sensor_stop(reader);
+        errno = error;
+        return -1;
+    }
     if (fcntl(reader->fd, F_SETFL, O_NONBLOCK) < 0)
     {
         int error = errno;

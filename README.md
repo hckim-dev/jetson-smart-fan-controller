@@ -1,43 +1,84 @@
-# jetson-smart-fan-controller
+# Jetson Smart Fan Controller
 
-Linux Device Driver 기반 Jetson Orin Nano 스마트 선풍기 프로젝트.
+Jetson Orin Nano에서 Linux Kernel Driver와 C 사용자 프로그램으로 모터, 로터리 엔코더, LED Bar, LCD, BMP180을 통합한 스마트 선풍기 제어 프로젝트입니다.
 
-현재 상태: **Motor/LED Bar 실물 성공, BMP180 실측/IPC 성공. EC11은 NPN회로(베이스10kΩ/컬렉터pull-up1kΩ)와 기본 debounce 기간0에서 동작하며, 파이프 없는 통합 실행의 명령 입력·로터리 동작을 사용자가 확인했다. LCD 문자 표시 가능하나 대비 문제는 남아 있다.**
+단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~6단계이며 이후 단계의 신규 기능은 포함하지 않습니다.
 
-지금 실행할 순서는 [최종 테스트 순서](docs/final-test.md)를 따른다.
-현재 변경의 커밋 판단과 검증 범위는 [커밋 전 검토](docs/commit-review.md)에 정리했다.
-수정 내역과 검증 범위는 [최종 재검토](docs/final-review.md), AUTO 정책은
-[BMP180 / AUTO 실행 안내](docs/bmp180-run.md)에 정리했다.
-기능별 검증과 남은 실물 확인은 [완성도 검토](docs/completeness-review.md)에 정리했다.
-레벨 시프터 없이 시험한 LCD 전체3.3V 공급을 유지한다.5V 공급으로 바꿀 때는 I²C 전압 변환이 필요하다.
-Encoder 관련 이전 구성/진단 기록은 [핀 변경 시험](docs/encoder-alt-pin-trial.md)과
-[조사 결과](docs/encoder-audit.md)에 보존했다.
+## 핵심 기능
+
+| 기능            | 구현                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| 수동 제어       | ON/OFF, 풍속 0~5, 4ms 요청 PWM(목표250Hz), 저속 기동 시 200ms boost      |
+| 로터리          | GPIO v2 양쪽 edge, Gray 4전이 해석, 방향 반전, 상·하한 제한              |
+| 온도 AUTO       | BMP180 온도에 따른 0~5단계, 하강 경계 1°C hysteresis                     |
+| 출력 표시       | LED Bar 8칸, LCD 16×2 모드·온도·선택 풍속                                |
+| 정지 정책       | 단일 controller, close/오류 정지, heartbeat lease 2초, 연속 ON 30초 제한 |
+| 프로세스/스레드 | 센서 fork/exec + 32-byte pipe IPC, LCD worker + mutex/condition          |
+| 회복 정책       | 센서 fault/stale 또는 보호 정지 뒤에는 명시적인 ON 필요                  |
+
+```mermaid
+flowchart LR
+    ENC[EC11 + NPN] --> GPIO[GPIO v2 edge fd]
+    GPIO --> CLI[fanctl · poll loop]
+    BMP[BMP180 child] --> PIPE[32-byte pipe]
+    PIPE --> CLI
+    CLI --> IOCTL[/dev/smartfan · ioctl]
+    IOCTL --> DRV[Kernel Driver · mutex / deadlines]
+    DRV --> MOTOR[L298N / motor]
+    DRV --> LED[LED Bar]
+    CLI --> WORKER[LCD worker]
+    WORKER --> LCD[PCF8574 / LCD1602]
+```
+
+## 현재 검증 상태
+
+Native build와 소프트웨어 회귀 검증을 통과했습니다. 모터·LED·BMP180 및 파이프 없는 실행의 명령 입력/로터리 동작은 사용자 실물 확인을 받았습니다. 사용자에게서 AUTO 정지·복구, lease 정지, 30초 제한, Ctrl+C 정지도 확인받았습니다. AUTO 복구 시험의 구체적인 고장 주입 방식과 모든 전기 특성이 측정된 것은 아닙니다.
+
+**남은 항목:** LCD 전체3.3V 구성의 대비 부족, Jetson 5V 핀으로 공급하는 모터의 기동/정지 전류와 전압 여유, 실제 system suspend, 단계별 RPM/발열/장기 반복 측정. 구현 및 단위 테스트 통과를 전기적 안전 인증이나 실물 worst-case 성능 보장으로 표현하지 않습니다.
+
+## 빠른 시작
+
+검증 환경은 Jetson aarch64, Ubuntu22.04, L4T36.5.2, kernel5.15.199-tegra, GCC11.4.0, glibc2.35입니다. GPIO/PWM/I²C 설정이 적용된 현재 장비를 기준으로 합니다.
 
 ```sh
 make all
 make test
-./build/fanctl --dry-run
+./build/fanctl --dry-run --encoder --bmp180 --lcd
 ```
 
-`--dry-run`에서 `on`, `speed 1`~`speed 5`, `speed 0`, `status`, `off`, `quit`를 입력할 수 있다.
-모터 OFF 상태에서 `led 0`~`led 8`로 점등을 시험하고 `led auto`로 자동 표시에 복귀한다.
-`./build/fanctl --dry-run --lcd`는 LCD 표시 preview도 하드웨어 없이 시험한다.
-`./build/fanctl --dry-run --bmp180 --lcd`에서는 `temp 27`, `mode auto`, `on`,
-`temp error`로 GPIO/I²C 접근 없이 AUTO 동작과 센서 오류 정지를 시연할 수 있다.
-실제 구동은
-`sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27`이며 시작은 MANUAL/OFF다.
-실제 실행은 배선·전원·초기 OFF 검증 후 진행한다.
+Dry-run은 실제 GPIO/I²C에 접근하지 않습니다. `temp 27`, `mode auto`, `on`, `temp error`, `off`, `quit`로 정책을 시험할 수 있습니다.
 
-- [Build / CLI 사용 / 실제 실행 준비](docs/build-run.md)
-- [1단계 종료 확인](docs/stage1-checklist.md)
-- [환경 조사](docs/environment.md)
-- [하드웨어 검토 및 연결 후보](docs/hardware.md)
-- [사진 확인 결과와 선별 상세 연결표](docs/wiring.md)
-- [Jetson 핀 → 부품 단자 간단 연결표](docs/pin-connections.md)
-- [강의 자료 반영 및 LED 구동 판단 정정](docs/lecture-review.md)
-- [L298N 전원 및 하드웨어 검사](docs/l298-hardware-test.md)
-- [Software Architecture 및 Build 설계](docs/architecture.md)
-- [진행 상태와 단계별 검증](docs/status.md)
+실제 장비에서는 배선과 전원 상태를 확인한 뒤:
 
-개발은 최소 ON/OFF 완성 → 실제 테스트 → 사용자 확인 → 확장 순서로 진행한다.
-Git staging/commit/push는 사용자가 직접 수행한다. 발표 자료는 별도 요청 전까지 만들지 않는다.
+```sh
+sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
+```
+
+시작 상태는 MANUAL/OFF입니다. `mode manual`, `speed 5`, `on`, `status`, `off`, `quit`를 한 줄씩 입력합니다. 이 장비에서 외부 `| tee`를 붙이면 명령 입력이 전달되지 않는 현상을 관찰했으므로 interactive 실행은 위처럼 직접 실행합니다. 내부 sudo/PTY 원인은 확정하지 않았습니다.
+
+## 문서
+
+- [시스템 설계와 동시성](docs/architecture.md)
+- [현재 하드웨어·핀 연결·전원 한계](docs/hardware.md)
+- [빌드·실행·개발 검증](docs/build-run.md)
+- [통합 실물 테스트](docs/final-test.md)
+- [개발 과정과 문제 해결](docs/development.md)
+- [발표·포트폴리오용 설명](docs/portfolio.md)
+- [이번 품질 개선 결과](docs/quality-review.md)
+- [현재 완료/미검증 상태](docs/status.md)
+
+## 저장소 구조
+
+```text
+app/       main.c / controller.c / fan-device.c, peripheral modules, diagnostics
+driver/    platform driver + miscdevice + GPIO/PWM consumers
+include/    fixed-width ioctl UAPI
+dts/       Tegra234 overlay source
+scripts/    offline DT preparation / guarded installer
+tests/     mock, IPC, PTY, CLI, cleanup regression tests
+docs/      current architecture, hardware, tests and selected development notes
+```
+
+빌드 산출물·실험 로그는 `build/`에 생성되며 Git에서 제외합니다. `make clean`은 알려진 산출물만 제거하고 실험 로그·사용자 메모·부팅 제안 자료는 보존합니다. Git commit/push는 사용자가 직접 수행합니다.
+
+과거 상세 조사 원본은 로컬 `docs/history/`에 보존하며 Git에서 제외합니다. 공개 개발 기록은 `docs/development.md`를 기준으로 합니다.

@@ -1,192 +1,116 @@
-# 최종 통합 테스트 순서 — 로터리 포함
+# 최종 통합 실물 테스트
 
-기존에 회전/점등/표시를 확인한 배선을 유지한다. LCD 전체3.3V 공급도 유지한다.
-엔코더는S1/S2 각각NPN회로를사용한다: EC11→B=10kΩ, C→3.3V=1kΩ,
-E→공통GND, C→Jetson 물리12/38. 전압검토는 [NPN 회로](encoder-npn-review.md)를 따른다.
-**추가 DT 설치, GPIO/PWM export, 재부팅은 필요 없다.** 이번debounce 변경은
-userspace이므로그변경만을위한module재적재는필요없다. 아래최종시험에서는
-기존AUTO보완도포함한현재module과실행파일을맞추기위해재적재한다.
+현재 정상 배선과 전원을 유지합니다. 전원 한계와 연결표는 [hardware.md](hardware.md)를 먼저 확인합니다. 발표 전 반복할 수 있는 최소 시나리오이며, 확인한 항목만 성공으로 기록합니다.
 
-## 1. 기존 실행 종료 → 빌드 → 새 module 적재
+## 1. 빌드와 센서 단독 확인
 
-현재 실행 중인 fanctl 터미널에서 `off`, `quit`를 차례로 입력한다.
-별도 bmp180-monitor가 있으면 Ctrl+C로 종료한다.
+기존 fanctl/encoder monitor/bmp180-monitor를 종료하고 저장소 root에서 실행합니다.
 
 ```sh
-cd /home/aidl/work/jetson-smart-fan-controller
-make all && make test
-```
-
-C 테스트8개 PASS와 Python `Ran 28 tests / OK`를 확인한다. 이후:
-
-```sh
-if [ -d /sys/module/smartfan ]; then
-    sudo rmmod smartfan
-fi
-sudo insmod driver/smartfan.ko
-ls -l /dev/smartfan
+make all
+make test
 ./build/bmp180-monitor --once
 ```
 
-rmmod가 busy이면 기존 fanctl을 먼저 종료한다. insmod가 이미 적재됐다는 오류를
-내면 기존 세션 종료/재적재를 완료한다. --once에서 온도와 기압 한 줄이 나오고
-종료되면 다음으로 진행한다. 통합 실행 중 별도 sensor reader를 켜지 않는다.
+C8개, CLI29개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
 
-## 2. 엔코더 단독 최종 확인
+Driver를 변경한 경우 기존 controller를 종료하고 module을 재적재합니다. App만 변경했으면 재적재할 필요가 없습니다. Module이 없으면 `sudo insmod driver/smartfan.ko`를 실행합니다. 적재 실패 이후 그대로 진행하지 않습니다. 현재 DT는 적용돼 있어 추가 GPIO/PWM export·DT 설치·재부팅은 필요 없습니다.
+
+## 2. 엔코더 단독
 
 ```sh
-sudo ./build/encoder-monitor 2>&1 | tee -i build/encoder-final.log
+sudo ./build/encoder-monitor
 ```
 
-시작출력의debounce_us=0을확인한다. 별도의--no-debounce는이제필요없다.
-정지5초 → 한방향천천히10딸깍 → 반대방향10딸깍 → 정지5초 → Ctrl+C.
-정지중STEP이없고양방향cw/ccw가증가하며sequence_gaps/invalid가반복해서
-늘지않는지확인한다. Gray cycle4전이를1STEP으로유지하므로EC11변형에따라
-두딸깍이1STEP일수있다. --reverse로방향표기를바꿀수있다.
-tee -i는Ctrl+C때monitor의CLOSED통계까지저장하기위해사용한다.
-이프로그램을종료해야fanctl이같은GPIO를요청할수있다.
+시작의 debounce_us=0을 확인합니다. 정지5초 → 한 방향10딸깍 → 반대10딸깍 → 정지5초 → Ctrl+C로 종료합니다. 정지 중 STEP이 없고 양방향 카운트가 증가해야 합니다. 반복적인 sequence_gaps/invalid는 조사 대상입니다. EC11 변형에 따라 두 딸깍당 한 STEP일 수 있으므로 일정한 비율과 방향을 봅니다.
 
-## 3. 통합 실행
+이 프로그램을 종료해야 통합 controller가 같은 GPIO를 요청할 수 있습니다.
+
+## 3. 통합 MANUAL 시험
 
 ```sh
 sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 ```
 
-이전에 표시됐던 LCD 주소가 다르면 그 주소를 사용한다. `SENSOR_PROCESS pid=...`를
-기록한다. `SENSOR temperature=... pressure=...`가 출력된 후 아래 시험을 한다.
-이후 명령은 shell이 아니라 **fanctl 안에 한 줄씩 입력하고 결과를 확인**한다.
-ENCODER줄의debounce_us=0과S1=50/S2=52를확인한다(물리핀번호12/38과구분).
-정상BMP주기측정은터미널에매번출력하지않는다. 첫성공/오류/복구/만료는알리고,
-현재온도·기압은status명령에서확인한다. LCD/측정/AUTO는계속동작한다.
-입력명령은CMD on처럼출력되므로기동명령수신과STATE ON을구분해확인한다.
-INPUT줄에tty/canonical/icrnl설정을출력한다. CR/LF/CRLF줄끝을모두처리하며,
-CRLF명령은중복실행하지않는다. 원시PTY에서Enter가CR인경우도회귀검증했다.
-실제sudo+tee실행은INPUT canonical=1/icrnl=1에서도명령미수신보고가있었다.
-이는CR-only 재현과다른상황이다. 파이프없는직접실행에서명령입력복구와
-로터리통합동작을사용자가확인했다. interactive fanctl은위와같이직접실행한다.
-sudo/TTY 입력중계의내부원인은확정하지않았다.
-방향이반대라면off/quit로종료한뒤같은명령에--reverse-encoder를추가해재실행한다.
+이 장비에서 외부tee 파이프 사용 시 입력 무응답을 관찰했으므로 위처럼 직접 실행합니다. 방향이 반대라면 `off`, `quit`로 종료하고 --reverse-encoder를 추가해 다시 실행합니다.
 
-## 4. MANUAL / LED / LCD / 로터리
+이후 명령은 **fanctl 안에 한 줄씩 입력**하고 결과를 관찰합니다. 각 명령의 CMD 표시와 상태 출력을 확인합니다. 정상 BMP 값은 반복 출력하지 않으며 status에서 현재 값을 봅니다.
 
-| 입력 순서                                     | 확인할 결과                                 |
-| --------------------------------------------- | ------------------------------------------- |
-| `status`                                      | OFF / MANUAL, 온도·기압 정상                |
-| `led 1`                                       | 첫 칸만 점등, 모터 정지                     |
-| `led 8`                                       | 8칸 점등, 모터 정지                         |
-| `led 0`                                       | 모두 소등                                   |
-| `speed 1`                                     | 선택 단계1, 모터 정지                       |
-| `on`                                          | 모터 회전, LED2칸, LCD ON / S:1/5           |
-| `speed 2` → `speed 3` → `speed 4` → `speed 5` | LED4/5/7/8칸, LCD 단계 반영, 모터 구동 변화 |
-| `off`                                         | 모터 정지, LED 소등, LCD OFF                |
-| `speed 2` 후 로터리 양방향 회전               | 모터OFF를유지하면서선택풍속0~5변경, LCD반영 |
-| 계속올리기/내리기                             | 상한5/하한0을넘지않음                       |
-| `speed 2` → `on` 후 로터리 회전               | PWM단계·LED칸수·LCD선택풍속이함께변경       |
-| 로터리로0단계까지내리기                       | 모터/LED정지                                |
-| 정지뒤로터리로1이상선택                       | 선택풍속만변경, 모터는정지유지              |
-| `on` → `off`                                  | 명시적인ON에서만재시작하고OFF에서정지       |
+| 순서 | 명령/동작                  | 정상 결과                             |
+| ---- | -------------------------- | ------------------------------------- |
+| 1    | `mode manual`, `status`    | MANUAL/OFF, sensor 정상               |
+| 2    | `led 1`, `led 8`, `led 0`  | 모터 OFF에서 해당 칸 점등/소등        |
+| 3    | `speed 2`, 로터리 양방향   | 선택 풍속0~5, 모터 정지 유지          |
+| 4    | `speed 5`, `on`, `status`  | STATE ON, duty100%, LED8칸, 실제 회전 |
+| 5    | 로터리/`speed 1`~`speed 5` | 선택 단계와 LED2/4/5/7/8칸, LCD 갱신  |
+| 6    | 로터리로0까지 내리기       | 모터/LED 정지                         |
+| 7    | 로터리로1이상 선택         | 선택만 변경, OFF 유지                 |
+| 8    | `on`, `off`                | 명시적 기동/정지                      |
 
-30초가 지나 자동 정지했다면 다음 구동 시험에는 on을 다시 입력한다.
-PWM 단계와 실제 RPM은 같지 않으며, 이 시험은 정량 RPM 교정이 아니다.
+30초가 지나면 정상적으로 자동 정지합니다. 풍속 변경이나 반복 ON으로 이 제한을 연장하지 않습니다. PWM duty와 실제RPM을 같다고 기록하지 않습니다.
 
-## 5. AUTO / 로터리 충돌 / 명시적 OFF / 최대ON
+## 4. AUTO와 최대 구동
 
-| 입력 / 동작                      | 확인할 결과                                                                  |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| `mode auto`                      | 모터 OFF, armed=0, 온도에 맞는 target 선택                                   |
-| `on`                             | armed=1; 24°C 이상이면 회전, 그 미만이면 대기                                |
-| `status`                         | AUTO / 온도 / 목표 단계와 실제 상태 확인                                     |
-| 로터리양방향회전                 | 같은온도구간에서는목표풍속을덮어쓰지않음; encoder는AUTO에서무시됨            |
-| `off` 후 수초 대기               | 온도가 높아도 OFF 유지, armed=0                                              |
-| `on` 후 30초 이상 관찰           | 연속 구동 중 온도가 유지되면 reason=max_on으로 정지하고 자동 재시작하지 않음 |
-| 새 정상 SENSOR 출력 확인 후 `on` | 명시적인 재시작 가능                                                         |
-| `off`                            | 다음 시험 전 정지                                                            |
+정상 SENSOR 값을 확인하고 `mode auto`, `on`, `status`를 입력합니다. 초기 구간은 <24°C=0, 24/26/28/30/32°C 이상에서1/2/3/4/5이며 하강 hysteresis는1°C입니다. 같은 온도 구간에서 로터리는 AUTO 목표를 바꾸지 않아야 합니다.
 
-처음 선택 시 온도별 단계는 다음과 같다. 냉각 시에는 각 경계보다1°C 낮아져야
-단계를 내린다. 예:2단계는25.0°C까지 유지하고25.0°C 미만에서1단계로 내려간다.
+`off` 이후 온도가 높아도 정지를 유지해야 합니다. `on`으로 다시 arm하고 온도가 구동 구간에서 유지되는 동안30초 연속 관찰합니다. max_on으로 정지한 뒤 자동 재시작하지 않아야 합니다. 새 정상 sample을 확인한 명시적 ON에서만 재시작합니다. 목표0으로 냉각돼 정지한 경우는 arm을 유지하므로 이후 온도 상승 시 기동할 수 있습니다.
 
-| 온도         | 단계 | 구동 중 LED |
-| ------------ | ---- | ----------- |
-| 24°C 미만    | 0    | 0칸         |
-| 24~26°C 미만 | 1    | 2칸         |
-| 26~28°C 미만 | 2    | 4칸         |
-| 28~30°C 미만 | 3    | 5칸         |
-| 30~32°C 미만 | 4    | 7칸         |
-| 32°C 이상    | 5    | 8칸         |
+실제 모든 온도 구간을 시험하지 못하면 해당 항목은 소프트웨어 정책 검증으로 구분합니다. 가짜 온도 주입은 --dry-run 전용입니다.
 
-현재 온도 때문에 시험할 수 없는 구간은 make test로 정책을 검사한 상태다.
-실제 모든 구간을 확인했다고 기록하지 않는다. 목표0으로 냉각된 정지는 arm을
-유지하므로 이후 온도가 상승하면 다시 구동될 수 있다.
+## 5. 센서 중단/회복
 
-## 6. 배선 변경 없이 센서 만료 / 복구 시험
-
-AUTO에서 정상 sample 확인 후 on을 입력한다. 별도 SSH 터미널을 열고
-위에서 기록한 **sensor child PID 숫자**를 넣는다. 12345는 실제 PID로 바꾼다.
+AUTO에서 구동한 뒤 별도 터미널을 엽니다. 시작 시 출력된 **SENSOR_PROCESS pid**를 사용합니다. 아래12345는 실제 sensor PID로 바꿉니다.
 
 ```sh
 sudo kill -STOP 12345
 ```
 
-마지막 sample 시각으로부터 약3초 뒤 `AUTO STOP reason=sensor_fault_or_stale`가
-나오고 모터 정지/LED 소등/LCD T:ERR를 확인한다. status에는 armed=0이어야 한다.
+마지막 sample으로부터 약3초 뒤 AUTO disarm, 모터/LED 정지, LCD T:ERR를 확인합니다.
 
 ```sh
 sudo kill -CONT 12345
 ```
 
-새 SENSOR 값과 LCD 온도 표시가 돌아와도 모터는 정지 상태를 유지해야 한다.
-fanctl에서 on을 입력해야 재시작한다. 시험 후 off를 입력한다.
-이 시험은 sample 공급 중단 시험이며 실제 NACK/전기적 bus 고장 시험은 아니다.
-실제 I²C 오류로 child가 종료됐으면 연결 복구 뒤 fanctl을 다시 실행한다.
+정상 온도가 돌아와도 모터는 정지를 유지해야 합니다. 상태 확인 후 명시적 `on`으로 재시작합니다. 이는 sample 공급 중단 시험이며 실제 NACK/전기적 I²C 고장 시험과는 다릅니다. 실제 통신 오류로 worker가 종료됐으면 연결 복구 뒤 fanctl을 재실행합니다.
 
-## 7. controller 멈춤 / lease 정지
+## 6. Controller 중단/lease
 
-센서복구뒤정상sample을확인하고AUTO에서on을입력한다. 별도터미널에서
-`pgrep -a -x fanctl`로실제통합controller PID를찾는다. **sensor PID가아니다.**
-아래12345를그PID로바꾼다.
+AUTO에서 구동한 뒤 `pgrep -a -x fanctl`로 **controller PID**를 확인합니다. Sensor PID와 다릅니다. 아래12345를 실제 controller PID로 바꿉니다.
 
 ```sh
 sudo kill -STOP 12345
 ```
 
-약2초lease만료후모터/LED가꺼져야한다. 2.5초이상지난뒤:
+프로그램이 멈춰 heartbeat를 보내지 못해도 kernel lease가 약2초 뒤 모터/LED를 꺼야 합니다. 2.5초 이상 지난 뒤:
 
 ```sh
 sudo kill -CONT 12345
 ```
 
-프로그램이복귀해도모터가자동재시작하지않아야한다. 상태출력에서lease정지와
-AUTO disarm을확인한다. LCD는STOP동안갱신되지않으므로실제모터를관찰한다.
-새정상SENSOR값을확인한뒤on으로재시작하고off로정지한다.
+프로그램이 돌아와도 자동 재기동하지 않아야 합니다. 새 SENSOR 값과 disarm 상태를 확인합니다. LCD는 STOP 동안 갱신되지 않으므로 실제 모터를 관찰합니다.
 
-## 8. 종료 확인
+## 7. 종료와 전기적 확인
 
-on으로 구동 중 Ctrl+C를 누른다. 모터/LED가 꺼지고 shell로 복귀하는지 확인한다.
+구동 중 Ctrl+C 또는 `quit`로 종료하고 모터/LED 정지, shell 복귀를 확인합니다.
 
 ```sh
 pgrep -a -x fanctl
 pgrep -a -x bmp180-monitor
 ```
 
-별도 인스턴스를 띄우지 않았다면 둘 다 출력이 없어야 한다. LCD는 최종 OFF 표시를
-시도한다. LCD 통신이 막힌 경우 join은2초 뒤 경고로 반환하지만, 실제 kernel I²C
-작업 종료 시점과 프로세스 소멸까지의 절대 상한을 보장하는 것은 아니다.
-모터 정지는 LCD worker 정리보다 먼저 요청한다.
+별도 인스턴스가 없다면 출력이 없어야 합니다. LCD final OFF는 best-effort입니다. Worker join은2초를 기다리지만 uninterruptible kernel I²C 작업까지 절대 종료 상한을 보장하지 않습니다.
 
-실제 system suspend 시험은 SSH가 끊길 수 있어 이번 필수 절차에서 제외했다.
-PM 경로는 소스 검토와 경쟁 조건 mock을 통과했으며 실물 절전 검증은 별도로 남는다.
+LCD VCC/5V rail의 정지·기동 전압, 모터/L298N 발열, 전원 정격과 전류 여유도 확인합니다. 실제 suspend는 SSH가 끊길 수 있어 이 기본 시나리오에서 제외했으며 별도 실물 미검증입니다.
 
-## 합격 기록
+## 성공 기록
 
-- [ ] 엔코더정지중가짜STEP없음, 양방향회전과종료통계확인
-- [ ] MANUAL ON/OFF·단계 변경, LED1/8/0, LCD 상태·온도 표시
-- [ ] 로터리풍속0~5상하한, 0정지, 정지뒤회전만으로재시작하지않음
-- [ ] AUTO 선택/ON, 명시적 OFF 뒤 정지 유지
-- [ ] AUTO에서로터리가온도목표를덮어쓰지않음
-- [ ] 온도가 유지되는 연속 구동에서30초 제한 후 정지 유지
-- [ ] sensor STOP 후 stale 정지, CONT 후 자동 재시작 없음
-- [ ] Ctrl+C 후 모터/LED 정지와 sensor child 종료
-- [ ] controller STOP동안lease정지, CONT뒤자동재시작없음
+| 항목                 | 현재 증거                                  | 발표 전 재확인             |
+| -------------------- | ------------------------------------------ | -------------------------- |
+| 기본 입출력·로터리   | 사용자 성공 보고                           | 위 MANUAL 순서             |
+| AUTO 정지·복구       | 사용자 성공 보고, 구체적 fault 방식 미기록 | 복구만으로 기동하지 않는지 |
+| 30초 제한            | 사용자 확인                                | max_on 상태/재시작 조건    |
+| controller lease     | 사용자 확인                                | 중단/복귀 상태             |
+| Ctrl+C 정지          | 사용자 확인                                | sensor child 종료 포함     |
+| LCD 시인성·전원 여유 | 미완료                                     | 측정/대비 확인             |
 
-이 항목을 확인하면 로터리를 포함한 이번 수정본의 기본 통합 시험을 마친 것이다.
-LCD 대비 개선과 장기 내구성/정량 성능 측정은 별도다.
+사용자 확인 날짜·동작·터미널 출력·전압 측정값을 함께 남기면 재현성과 발표 근거가 됩니다. 실물 관찰 없이 checkbox를 채우지 않습니다.

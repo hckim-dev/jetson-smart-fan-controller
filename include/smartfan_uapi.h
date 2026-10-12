@@ -102,7 +102,8 @@ struct smartfan_led_status
 #define SMARTFAN_IOC_GET_LEDS _IOR('F', 7, struct smartfan_led_status)
 
 /* Atomic AUTO update. Only an explicit operator ON sets rearm=1. */
-struct smartfan_auto_request {
+struct smartfan_auto_request
+{
 	__u32 abi_version;
 	__u32 level;
 	__u32 rearm;

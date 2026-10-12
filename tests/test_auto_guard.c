@@ -3,17 +3,14 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <sys/ioctl.h>
-static int guarded_ioctl(int fd, unsigned long cmd, ...);
-#define ioctl guarded_ioctl
-#define main tested_fanctl_main
-#include "../app/fanctl.c"
-#undef main
-#undef ioctl
+#include <errno.h>
+#include <stdio.h>
+#include "controller.h"
 
 static bool inhibited, running, inject_stale;
 static uint32_t level;
 static unsigned int auto_calls, manual_on_calls;
-static int guarded_ioctl(int fd, unsigned long cmd, ...)
+int __wrap_ioctl(int fd, unsigned long cmd, ...)
 {
     (void)fd;
     va_list args;
@@ -35,7 +32,7 @@ static int guarded_ioctl(int fd, unsigned long cmd, ...)
     {
         struct smartfan_auto_request *request = va_arg(args, struct smartfan_auto_request *);
         ++auto_calls;
-        uint64_t now = now_ms() + (inject_stale ? SMARTFAN_AUTO_MAX_AGE_MS : 0);
+        uint64_t now = fan_now_ms() + (inject_stale ? SMARTFAN_AUTO_MAX_AGE_MS : 0);
         if (!smartfan_auto_sample_fresh(now, request->sample_boottime_ms))
         {
             errno = ESTALE;
@@ -78,39 +75,39 @@ static void scenario(int32_t temp, bool rearm, bool stale, bool expect_running)
     running = false;
     inhibited = false;
     inject_stale = stale;
-    struct backend backend = {.fd = 100, .sensor = {.fd = -1}, .sensor_enabled = true, .have_sample = true, .auto_mode = true, .auto_armed = true, .auto_rearm_pending = rearm, .sample = {.magic = SENSOR_MAGIC, .temperature_mc = temp, .pressure_pa = 101325}};
-    backend.sample.timestamp_ms = now_ms();
-    assert(auto_tick(&backend) == 0);
+    struct controller backend = {.device = {.fd = 100}, .sensor = {.fd = -1}, .sensor_enabled = true, .have_sample = true, .auto_mode = true, .auto_armed = true, .auto_rearm_pending = rearm, .sample = {.magic = SENSOR_MAGIC, .temperature_mc = temp, .pressure_pa = 101325}};
+    backend.sample.timestamp_ms = fan_now_ms();
+    assert(controller_auto_tick(&backend) == 0);
     assert(running == expect_running);
     if (!expect_running)
         assert(!backend.auto_armed);
 }
 int main(void)
 {
-    struct backend notices = {.sensor_enabled = true};
-    assert(!report_sensor_transition(&notices));
+    struct controller notices = {.sensor_enabled = true};
+    assert(!controller_report_sensor_transition(&notices));
     notices.have_sample = true;
-    notices.sample.timestamp_ms = now_ms();
+    notices.sample.timestamp_ms = fan_now_ms();
     notices.sample.temperature_mc = 25000;
-    assert(report_sensor_transition(&notices));
+    assert(controller_report_sensor_transition(&notices));
     for (unsigned int i = 0; i < 100; ++i)
     {
         notices.sample.temperature_mc += 1;
         notices.sample.pressure_pa += 1;
-        notices.sample.timestamp_ms = now_ms();
-        assert(!report_sensor_transition(&notices));
+        notices.sample.timestamp_ms = fan_now_ms();
+        assert(!controller_report_sensor_transition(&notices));
     }
     notices.sample.error = EIO;
-    assert(report_sensor_transition(&notices));
-    assert(!report_sensor_transition(&notices));
+    assert(controller_report_sensor_transition(&notices));
+    assert(!controller_report_sensor_transition(&notices));
     notices.sample.error = ENOTDIR;
-    assert(report_sensor_transition(&notices));
+    assert(controller_report_sensor_transition(&notices));
     notices.sample.error = 0;
-    notices.sample.timestamp_ms = now_ms();
-    assert(report_sensor_transition(&notices));
-    notices.sample.timestamp_ms = now_ms() - SENSOR_MAX_AGE_MS;
-    assert(report_sensor_transition(&notices));
-    assert(!report_sensor_transition(&notices));
+    notices.sample.timestamp_ms = fan_now_ms();
+    assert(controller_report_sensor_transition(&notices));
+    notices.sample.timestamp_ms = fan_now_ms() - SENSOR_MAX_AGE_MS;
+    assert(controller_report_sensor_transition(&notices));
+    assert(!controller_report_sensor_transition(&notices));
     puts("PASS sensor output: 100 normal samples silent; fault/recovery/stale reported once");
     _Static_assert(sizeof(struct smartfan_auto_request) == 24, "AUTO ABI layout");
     assert(smartfan_auto_sample_fresh(2999, 0));
@@ -124,10 +121,10 @@ int main(void)
     level = 0;
     running = false;
     inject_stale = false;
-    struct backend cold = {.fd = 100, .sensor = {.fd = -1}, .sensor_enabled = true, .have_sample = true, .auto_mode = true, .auto_armed = true, .sample = {.magic = SENSOR_MAGIC, .temperature_mc = 22000, .pressure_pa = 101325}};
-    cold.sample.timestamp_ms = now_ms();
+    struct controller cold = {.device = {.fd = 100}, .sensor = {.fd = -1}, .sensor_enabled = true, .have_sample = true, .auto_mode = true, .auto_armed = true, .sample = {.magic = SENSOR_MAGIC, .temperature_mc = 22000, .pressure_pa = 101325}};
+    cold.sample.timestamp_ms = fan_now_ms();
     for (unsigned int i = 0; i < 20; ++i)
-        assert(auto_tick(&cold) == 0);
+        assert(controller_auto_tick(&cold) == 0);
     assert(!running);
     assert(auto_calls == 4 && manual_on_calls == 0);
     puts("PASS atomic AUTO: crossed stop, cold update/idle, expired sample, explicit rearm; no plain ON fallback");

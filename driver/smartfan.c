@@ -106,8 +106,8 @@ static int smartfan_stop_locked(struct smartfan *fan, u32 reason)
 	fan->duty_percent = 0;
 	fan->stop_reason = reason;
 	if (reason == SMARTFAN_STOP_LEASE || reason == SMARTFAN_STOP_MAX_ON ||
-	    reason == SMARTFAN_STOP_PWM_ERROR || reason == SMARTFAN_STOP_SUSPEND ||
-	    reason == SMARTFAN_STOP_SENSOR)
+		reason == SMARTFAN_STOP_PWM_ERROR || reason == SMARTFAN_STOP_SUSPEND ||
+		reason == SMARTFAN_STOP_SENSOR)
 		fan->auto_inhibited = true;
 	smartfan_leds_auto_locked(fan);
 	if (fan->pwm)
@@ -252,8 +252,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 		if (copy_from_user(&auto_request, (void __user *)arg, sizeof(auto_request)))
 			return -EFAULT;
 		if (auto_request.abi_version != SMARTFAN_ABI_VERSION ||
-		    auto_request.level > SMARTFAN_MAX_SPEED_LEVEL || auto_request.rearm > 1 ||
-		    auto_request.reserved)
+			auto_request.level > SMARTFAN_MAX_SPEED_LEVEL || auto_request.rearm > 1 ||
+			auto_request.reserved)
 			return -EINVAL;
 		break;
 	case SMARTFAN_IOC_SET:
@@ -322,9 +322,13 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd)
 	{
 	case SMARTFAN_IOC_SET_AUTO:
-		if (!fan->pwm) { ret = -EOPNOTSUPP; break; }
+		if (!fan->pwm)
+		{
+			ret = -EOPNOTSUPP;
+			break;
+		}
 		if (!smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
-					      auto_request.sample_boottime_ms))
+										auto_request.sample_boottime_ms))
 		{
 			smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
 			ret = -ESTALE;
@@ -337,12 +341,17 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 		}
 		fan->auto_inhibited = false;
 		fan->level = auto_request.level;
-		if (!fan->level) { ret = smartfan_stop_locked(fan, SMARTFAN_STOP_USER); break; }
+		if (!fan->level)
+		{
+			ret = smartfan_stop_locked(fan, SMARTFAN_STOP_USER);
+			break;
+		}
 		fan->last_nonzero_level = fan->level;
 		if (fan->running && !fan->boosting)
 		{
 			ret = smartfan_set_duty_locked(fan, smartfan_level_duty(fan->level));
-			if (ret) break;
+			if (ret)
+				break;
 		}
 		request.enabled = 1;
 		if (fan->running)
@@ -350,7 +359,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 			ret = smartfan_expire_locked(fan, jiffies);
 			if (ret || !fan->running)
 			{
-				if (!ret) ret = -ECANCELED;
+				if (!ret)
+					ret = -ECANCELED;
 				break;
 			}
 		}
@@ -396,7 +406,7 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 				break;
 			}
 			if (automatic && !smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
-								   auto_request.sample_boottime_ms))
+														 auto_request.sample_boottime_ms))
 			{
 				smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
 				ret = -ESTALE;
@@ -406,7 +416,7 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 			fan->running = true;
 		}
 		if (automatic && !smartfan_auto_sample_fresh(ktime_to_ms(ktime_get_boottime()),
-						   auto_request.sample_boottime_ms))
+													 auto_request.sample_boottime_ms))
 		{
 			smartfan_stop_locked(fan, SMARTFAN_STOP_SENSOR);
 			ret = -ESTALE;
@@ -486,8 +496,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd,
 		speed_status.max_level = SMARTFAN_MAX_SPEED_LEVEL;
 		speed_status.duty_percent = fan->duty_percent;
 		speed_status.capabilities = (fan->pwm ? SMARTFAN_CAP_PWM : 0) |
-			(fan->leds ? SMARTFAN_CAP_LED_BAR : 0) |
-			(fan->pwm ? SMARTFAN_CAP_AUTO : 0);
+									(fan->leds ? SMARTFAN_CAP_LED_BAR : 0) |
+									(fan->pwm ? SMARTFAN_CAP_AUTO : 0);
 		speed_status.period_ns = fan->period_ns;
 		if (fan->boosting)
 			speed_status.boost_remaining_ms =

@@ -13,3 +13,6 @@ __pycache__/
 
 /docs/*.pdf
 /docs/img/
+
+# Local archive of superseded investigation notes; current docs are tracked.
+/docs/history/

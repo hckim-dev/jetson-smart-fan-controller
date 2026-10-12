@@ -4,10 +4,94 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+int __real_execv(const char *path, char *const argv[]);
+pid_t __real_fork(void);
+static int fail_fork;
+
+pid_t __wrap_fork(void)
+{
+    if (fail_fork) { errno = EAGAIN; return -1; }
+    return __real_fork();
+}
+
+static void test_fork_failure(void)
+{
+    sigset_t before, after;
+    assert(sigprocmask(SIG_SETMASK, NULL, &before) == 0);
+    int next_fd = open("/dev/null", O_RDONLY);
+    assert(next_fd >= 0);
+    close(next_fd);
+    struct sensor_reader reader;
+    fail_fork = 1;
+    assert(sensor_start(&reader, "unused", "unused") == -1 && errno == EAGAIN);
+    fail_fork = 0;
+    assert(reader.fd == -1 && reader.pid == 0);
+    assert(sigprocmask(SIG_SETMASK, NULL, &after) == 0);
+    const int signals[] = {SIGINT, SIGTERM, SIGHUP};
+    for (unsigned int i = 0; i < 3; ++i)
+        assert(sigismember(&before, signals[i]) == sigismember(&after, signals[i]));
+    int fd = open("/dev/null", O_RDONLY);
+    assert(fd == next_fd); /* Neither pipe end leaked. */
+    close(fd);
+}
+
+/* Hold the real fork child in the pre-exec window, without GPIO/I2C. */
+int __wrap_execv(const char *path, char *const argv[])
+{
+    if (strcmp(path, "test-pre-exec-window"))
+        return __real_execv(path, argv);
+    struct sigaction action;
+    sigset_t mask;
+    if (sigaction(SIGTERM, NULL, &action) < 0 ||
+        sigprocmask(SIG_SETMASK, NULL, &mask) < 0) _exit(124);
+    struct sensor_sample ready = {.magic = SENSOR_MAGIC, .sequence = 1,
+        .error = EINPROGRESS, .temperature_mc = action.sa_handler == SIG_DFL,
+        .pressure_pa = sigismember(&mask, SIGTERM) == 0};
+    if (write(STDOUT_FILENO, &ready, sizeof(ready)) != sizeof(ready)) _exit(125);
+    for (;;) pause();
+}
+
+static void parent_signal_handler(int signo) { (void)signo; }
+
+static double monotonic_seconds(void)
+{
+    struct timespec ts;
+    assert(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void test_pre_exec_termination(void)
+{
+    struct sigaction previous, handler = {.sa_handler = parent_signal_handler};
+    sigemptyset(&handler.sa_mask);
+    assert(sigaction(SIGTERM, &handler, &previous) == 0);
+    struct sensor_reader reader;
+    struct sensor_sample sample;
+    assert(sensor_start(&reader, "test-pre-exec-window", "unused") == 0);
+    const struct timespec delay = {.tv_nsec = 1000000};
+    int result = 0;
+    for (unsigned int i = 0; i < 2000 && !result; ++i) {
+        result = sensor_next(&reader, &sample, UINT64_C(1000000000000));
+        if (!result) nanosleep(&delay, NULL);
+    }
+    assert(result == 1 && sample.error == EINPROGRESS);
+    assert(sample.temperature_mc == 1 && sample.pressure_pa == 1);
+    double start = monotonic_seconds();
+    sensor_stop(&reader);
+    double elapsed = monotonic_seconds() - start;
+    assert(sigaction(SIGTERM, &previous, NULL) == 0);
+    printf("pre-exec SIGTERM cleanup: %.3fs\n", elapsed);
+    /* Verify disposition/mask directly rather than a scheduler-sensitive
+     * wall-clock assertion. The child is ready to terminate on SIGTERM.
+     */
+    assert(reader.fd == -1 && reader.pid == 0);
+}
 
 int main(void)
 {
@@ -79,6 +163,8 @@ int main(void)
     }
     assert(result == 1 && received.error == ENOTDIR);
     sensor_stop(&reader);
-    puts("PASS sensor IPC: partial reads, EAGAIN, sequence errors, EOF, fork/exec error frame, cleanup");
+    test_fork_failure();
+    test_pre_exec_termination();
+    puts("PASS sensor IPC: partial reads, EAGAIN, sequence errors, EOF, fork/exec error frame, pre-exec signal cleanup");
     return 0;
 }

@@ -73,6 +73,25 @@ class Session:
 
 
 class FanctlTests(unittest.TestCase):
+    def test_invalid_stdin_rejected_before_resource_open(self):
+        for redirect in ("exec 0<&-", "exec 0>/dev/null"):
+            with self.subTest(redirect=redirect):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        redirect + '; exec "$1" --dry-run',
+                        "bash",
+                        str(CLI),
+                    ],
+                    capture_output=True,
+                    timeout=3,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"stdin:", result.stderr)
+                self.assertNotIn(b"READY", result.stdout)
+                self.assertNotIn(b"DRY-RUN", result.stdout)
+
     def test_raw_pty_enter_cr_and_crlf_commands(self):
         for ending in (b"\r", b"\r\n"):
             with self.subTest(ending=ending):
