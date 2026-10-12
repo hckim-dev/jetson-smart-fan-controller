@@ -25,7 +25,7 @@ int __wrap_ioctl(int fd, unsigned long cmd, ...)
     {
         struct smartfan_speed_status *speed = va_arg(args, struct smartfan_speed_status *);
         *speed = (struct smartfan_speed_status){.abi_version = 1, .level = level, .max_level = 5, .capabilities = SMARTFAN_CAP_PWM | SMARTFAN_CAP_AUTO};
-        /* Model a protected kernel stop after the preceding GET snapshot. */
+        /* GET snapshot 이후 보호 정지가 끼어드는 경쟁 조건을 재현한다. */
         inhibited = true;
     }
     else if (cmd == SMARTFAN_IOC_SET_AUTO)
@@ -85,14 +85,14 @@ static void scenario(int32_t temp, bool rearm, bool stale, bool expect_running)
 static void test_stats_stale_episode(void)
 {
     struct controller controller = {.sensor_enabled = true, .have_sample = true, .sample = {.timestamp_ms = fan_now_ms() - SENSOR_MAX_AGE_MS}};
-    /* Stats health is independent of terminal status/report suppression. */
+    /* 통계용 health는 터미널 통지/중복 억제 상태와 독립적이다. */
     assert(controller_report_sensor_transition(&controller));
     assert(controller_auto_tick(&controller) == 0);
     assert(controller_auto_tick(&controller) == 0);
     assert(controller.stats.sensor_faults == 1);
     controller.sample.error = EIO;
     assert(controller_auto_tick(&controller) == 0);
-    assert(controller.stats.sensor_faults == 1); /* Same failed episode. */
+    assert(controller.stats.sensor_faults == 1); /* 같은 장애 구간이므로 중복 집계하지 않는다. */
     controller.sample.error = 0;
     controller.sample.timestamp_ms = fan_now_ms();
     assert(controller_auto_tick(&controller) == 0);
@@ -135,11 +135,11 @@ int main(void)
     assert(smartfan_auto_sample_fresh(2999, 0));
     assert(!smartfan_auto_sample_fresh(3000, 0));
     assert(!smartfan_auto_sample_fresh(100, 101));
-    scenario(27000, false, false, false); /* Suspend between GET and start. */
-    scenario(22000, false, false, false); /* Cold update cannot clear inhibition. */
-    scenario(27000, true, true, false);   /* Time passed after frontend check. */
-    scenario(27000, true, false, true);   /* Explicit operator ON can rearm. */
-    /* A cold, unchanged target must not submit OFF repeatedly at poll rate. */
+    scenario(27000, false, false, false); /* GET과 기동 사이의 suspend. */
+    scenario(22000, false, false, false); /* 저온 갱신도 보호 차단을 해제할 수 없다. */
+    scenario(27000, true, true, false);   /* 프런트 검사 이후 sample이 만료됨. */
+    scenario(27000, true, false, true);   /* 명시적 ON만 다시 arm할 수 있다. */
+    /* 저온의 같은 target은 poll마다 OFF를 반복 전송하지 않는다. */
     level = 0;
     running = false;
     inject_stale = false;

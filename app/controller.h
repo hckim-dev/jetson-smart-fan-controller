@@ -16,7 +16,7 @@ enum sensor_health
     SENSOR_STALE,
 };
 
-/* Session counters are main-owned; no worker reads or writes them. */
+/* Session counter는 main만 갱신하며 worker와 공유하지 않는다. */
 struct controller_stats
 {
     uint64_t started_ms, commands, sensor_frames, injected_samples;
@@ -24,7 +24,7 @@ struct controller_stats
     enum sensor_health previous_health;
 };
 
-/* Main owns resource lifetime and serializes all controller calls. */
+/* main이 자원 수명을 소유하고 모든 controller 호출을 직렬화한다. */
 struct controller
 {
     struct fan_device device;
@@ -52,8 +52,7 @@ int controller_change_level(struct controller *controller, int delta);
 void controller_print_state(const struct smartfan_status *state);
 int controller_parse_ms(const char *text, uint32_t minimum, uint32_t maximum,
                         uint32_t *value);
-/* Returns 1 to quit, -1 on device failure, 0 to continue. stop_signal must
- * point to the main-owned signal flag; no handlers or fd lifetime here. */
+/* 반환값은 종료 1, 장치 오류 -1, 계속 0이다. stop_signal은 main의 신호 flag를 가리킨다. */
 int controller_command(struct controller *controller, char *line, bool *known_running,
                        bool encoder_enabled, bool reverse_encoder, const volatile sig_atomic_t *stop_signal);
 

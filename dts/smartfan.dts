@@ -17,19 +17,19 @@
 				status = "okay";
 				pinctrl-names = "default";
 				pinctrl-0 = <&smartfan_output>;
-				/* J12 physical 32: PG.06; gpiochip line offset 41. */
+				/* J12 물리 32번: PG.06, gpiochip offset 41. */
 				enable-gpios = <&gpio TEGRA234_MAIN_GPIO(G, 6)
 						GPIO_ACTIVE_HIGH>;
-				/* J12 physical 15: PN.01, PWM1 channel 0, 250 Hz. */
+				/* J12 물리 15번: PN.01, PWM1 channel0, 목표 250Hz. */
 				pwms = <&pwm1 0 4000000>;
 				pwm-names = "motor";
-				/* J12 physical 29: PQ.05; gpiochip line offset 105. */
+				/* J12 물리 29번: PQ.05, gpiochip offset 105. */
 				in2-gpios = <&gpio TEGRA234_MAIN_GPIO(Q, 5)
 					     GPIO_ACTIVE_HIGH>;
 				lease-timeout-ms = <2000>;
 				max-on-ms = <30000>;
 				startup-boost-ms = <200>;
-				/* Segments 1..8: J12 physical 13,16,18,22,33,35,37,40. */
+				/* LED 1..8은 J12 물리 13,16,18,22,33,35,37,40번 순서. */
 				led-gpios = <&gpio TEGRA234_MAIN_GPIO(Y, 0) GPIO_ACTIVE_HIGH>,
 					    <&gpio TEGRA234_MAIN_GPIO(Y, 4) GPIO_ACTIVE_HIGH>,
 					    <&gpio TEGRA234_MAIN_GPIO(Y, 3) GPIO_ACTIVE_HIGH>,
@@ -47,16 +47,16 @@
 		__overlay__ {
 			smartfan_output: smartfan-output {
 				outputs {
-					/* Motor enable and fixed reverse-direction interlock. */
+					/* 모터 ENA와 고정된 역방향 입력을 GPIO 출력으로 설정한다. */
 					nvidia,pins = "soc_gpio19_pg6",
 						      "soc_gpio32_pq5";
 					nvidia,tristate = <0>;
 					nvidia,enable-input = <0>;
-					/* GPIO mode: PADCTL SFSEL bit is zero. */
+					/* GPIO 모드는 PADCTL SFSEL bit=0이다. */
 					nvidia,gpio-mode = <0>;
 				};
 				encoder-inputs {
-					/* J12 physical 12 and 38; requested by userspace only. */
+					/* J12 물리 12/38번은 userspace만 요청하는 엔코더 입력이다. */
 					nvidia,pins = "soc_gpio41_ph7", "soc_gpio43_pi1";
 					nvidia,tristate = <1>;
 					nvidia,enable-input = <1>;
@@ -92,12 +92,12 @@
 		__overlay__ {
 			status = "okay";
 			pinctrl-names = "default";
-			/* PWM runtime resume must restore its own SFIO pad state. */
+			/* PWM runtime resume이 자신의 SFIO pad 상태를 복원해야 한다. */
 			pinctrl-0 = <&smartfan_pwm>;
 		};
 	};
 	fragment@3 {
-		/* Header SPI1 uses the same PY pads as LED segments 1..4/7. */
+		/* Header SPI1은 LED 1..4/7과 같은 PY pad를 사용하므로 비활성화한다. */
 		target-path = "/bus@0/spi@3230000";
 		__overlay__ {
 			status = "disabled";
@@ -106,7 +106,7 @@
 	fragment@4 {
 		target-path = "/bus@0/i2c@c250000";
 		__overlay__ {
-			/* PCF8574T supports Standard-mode (100 kHz), not 400 kHz. */
+			/* PCF8574T는 400kHz가 아닌 Standard-mode 100kHz를 사용한다. */
 			clock-frequency = <100000>;
 		};
 	};

@@ -105,9 +105,7 @@ static int reseed(struct encoder_input *input)
     input->decoder.invalid_transitions = invalid_transitions;
     if (clock_ns(&input->resync_after_ns) < 0)
         return -1;
-    /* Drop queued history through this snapshot, even across multiple batches.
-     * Movement while reseeding may be lost; it must not produce a false step.
-     */
+    /* snapshot까지의 대기 event를 여러 batch에 걸쳐 폐기한다. 재동기화 중 움직임을 놓쳐도 가짜 step을 만들지 않는다. */
     input->resync_pending = true;
     return 0;
 }
@@ -148,10 +146,7 @@ static int encoder_open_config(struct encoder_input *input, const char *chip_pat
                      (edges ? GPIO_V2_LINE_FLAG_EDGE_RISING |
                                   GPIO_V2_LINE_FLAG_EDGE_FALLING
                             : 0U),
-            /* Explicitly request the period, including zero. Omitting it
-             * retains prior hardware configuration. On Tegra L4T36.5.2,
-             * zero sets threshold=0 but does not clear debounce-enable.
-             */
+            /* 0도 명시적으로 요청해야 이전 debounce 설정이 남지 않는다. L4T36.5.2의 0은 threshold를 0으로 만들지만 enable bit는 유지한다. */
             .num_attrs = 1,
             .attrs = {{
                 .attr = {
@@ -289,7 +284,7 @@ int encoder_read(struct encoder_input *input, int *delta)
             input->last_seq = events[number - 1U].seqno;
             *delta = 0;
             input->num_steps = 0;
-            /* Current batch and older queued state cannot be replayed safely. */
+            /* 현재 batch와 이전 대기 상태를 안전하게 재생할 수 없어 재동기화한다. */
             if (reseed(input) < 0)
                 return -1;
             return 1;

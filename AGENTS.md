@@ -1,15 +1,25 @@
-# 프로젝트 지침
+# 프로젝트 개발 지침
 
-- 한국어로 보고하며, 사용자가 제공한 전체 프로젝트 요청과 상위 지침을 따른다.
-- 각 단계의 실제 검증 결과를 보고하고 정상 동작 확인 후 확장한다. 최신 사용자 지시: 승인 질문을 반복하지 않고, 에이전트가 가능한 작업은 수행하며 사용자 작업은 명령과 순서로 바로 안내한다.
-- 최신 사용자 지시: hardware 저항 부하 시험을 코딩의 필수 선행 조건으로 두지 않는다. 작성/Build/software test는 먼저 진행할 수 있고, module load/GPIO 출력/모터 통전은 실제 배선·전원 검증 후 진행한다.
-- `git add`, `git commit`, `git push`, `git reset --hard`, `git clean -fd`를 실행하지 않는다.
-- 실물 및 전기적 적합성이 검증되기 전에는 모터 구동이나 배선 실행을 안내하지 않는다.
-- 이 프로젝트의 DT/Pinmux 수정과 필요한 재부팅은 사용자에게 승인됐다. 현 상태/백업/복구 경로를 확인하고 진행하며 중복 승인 질문은 하지 않는다. 실제 통전 안전 조건과 권한 제약은 계속 준수한다.
-- 기존 `/boot/modified.dtb`, Jetson-IO overlay, 수업 소스 및 사용자 파일을 덮어쓰지 않는다.
-- 실행 Kernel은 조사 시점 `5.15.199-tegra`; Kbuild는 `/lib/modules/$(uname -r)/build`를 사용한다. `../linux`는 `5.15.185`이므로 대체 빌드 경로로 사용하지 않는다.
-- 물리 Header 번호, gpiochip line offset, DT GPIO specifier를 구분한다. 하드코딩된 전역 GPIO 번호나 MMIO 주소를 수업 소스에서 복사하지 않는다.
-- Carrier의 TXB0108 GPIO 구동 제약을 준수한다. ±20µA 출력 전압 보장 조건과 절대최대 전류를 혼동하지 않는다. 저항을 포함한 LED 직결 시험은 부품/전압/전류 검증 후 판단하며 외부 LED Driver를 무조건 필수로 요구하지 않는다. 모터 전원을 GPIO에서 공급하거나 GPIO 측에 10kΩ pull-down을 임의 추가하지 않는다.
-- 직접 구현한 Driver가 모터 제어와 정지 정책을 담당한다. GPIO/PWM provider를 재구현하거나 기존 Driver와 같은 자원을 중복 점유하지 않는다.
-- GPIO 요청·출력, I²C scan/read/write, PWM export/enable, module load, system 설정 변경은 읽기 전용 환경 조사와 구분한다.
-- Build 성공과 실물 테스트 성공을 구분한다. 진행 상태·검증·Pin Mapping 변경을 `docs/`에 갱신한다.
+이 파일은 저장소에 적용되는 개발·검증 규칙이다. 실행 환경과 배선의 기준 문서는 `docs/build-run.md`, `docs/hardware.md`이다.
+
+## 변경과 Git
+
+- 한국어로 결과를 보고하고 소프트웨어 검증과 실물 확인을 구분한다.
+- 기존 변경과 사용자 자료를 보존한다. `git add`, `git commit`, `git push`, `git reset --hard`, `git clean -fd`는 실행하지 않는다.
+- Boot 설정·전원·배선 변경은 현재 상태와 백업·복구 방법을 먼저 확인한다. `/boot/modified.dtb`, Jetson-IO 구성과 원본 자료를 임의로 덮어쓰지 않는다.
+
+## 자원과 동시성
+
+- Kernel driver가 모터 출력과 lease/max-on 보호를 소유한다. 기존 GPIO/PWM provider를 재사용하고 동일 자원을 이중 요청하거나 임의 MMIO 쓰기를 추가하지 않는다.
+- main이 controller 상태를 변경한다. Sensor는 process/pipe, LCD와 선택형 log는 snapshot/queue worker이다. Fork는 worker 생성 전에 수행한다.
+- 오류·종료·suspend 후 자동 재기동을 허용하지 않는다. AUTO는 유효 sample과 명시적 ON을 요구한다.
+- 주석은 한국어로 이유·계약·실행 문맥을 설명한다. SPDX, API 이름, ABI 식별자는 원문을 유지한다.
+- 사용자 C 코드는 C11/공백 4칸, kernel/UAPI/DTS는 해당 커널 스타일을 따른다. 기존 ABI layout과 ioctl 번호를 변경하지 않는다.
+
+## 환경과 검증
+
+- Kbuild는 실행 kernel과 일치하는 `/lib/modules/$(uname -r)/build`를 사용한다. 다른 버전의 수업 kernel tree로 대체하지 않는다.
+- 물리 header 번호, gpiochip offset, DT specifier를 구분한다. GPIO 전류 한계와 전압 보장 조건을 혼동하지 않는다.
+- Module 적재, GPIO/I²C/PWM 요청, 실제 모터 통전은 읽기 전용 조사나 dry-run과 구분한다. 전기 조건이 미확인인 배선을 실행하지 않는다.
+- 변경에 맞는 `make test`, analyzer/sanitizer/thread 검사와 DT offline 검증을 수행한다. 경고를 감추려고 compiler 옵션·시간 제한을 바꾸지 않는다.
+- `docs/history`, build 로그, 원본 사진/PDF는 로컬 보관 자료다. 공개 문서는 현재 구현과 확인한 결과만 설명한다.

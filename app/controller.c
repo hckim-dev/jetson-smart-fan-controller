@@ -93,7 +93,7 @@ int controller_monitor_tick(struct controller *controller)
            (long)controller->sensor.pid, state.running ? "none" : reason_name(state.stop_reason),
            (unsigned int)state.lease_remaining_ms, (unsigned int)state.on_remaining_ms,
            log.dropped, log.error);
-    /* Schedule from this emission: no catch-up flood after a stall/suspend. */
+    /* 지연이나 suspend 후 지난 주기만큼 몰아서 출력하지 않는다. */
     controller->next_monitor_ms = now + controller->monitor_interval_ms;
     return 0;
 }
@@ -118,9 +118,7 @@ static void print_environment(struct controller *controller)
                fan_now_ms() - controller->sample.timestamp_ms);
 }
 
-/* Normal periodic samples update control/LCD silently. Report availability,
- * faults, recovery and stale transitions once; status always prints values.
- */
+/* 정상 sample은 제어/LCD만 갱신한다. 장애·복구·stale 전이는 한 번 알리고 status는 항상 값을 표시한다. */
 
 bool controller_report_sensor_transition(struct controller *controller)
 {
@@ -196,7 +194,7 @@ int controller_print_speed(struct controller *controller)
     return 0;
 }
 
-/* Kernel validates AUTO inhibition and sample freshness atomically with output. */
+/* 커널은 출력 변경과 같은 mutex 안에서 AUTO 차단 상태와 sample freshness를 검증한다. */
 int controller_auto_tick(struct controller *controller)
 {
     observe_sensor_health(controller);
@@ -296,7 +294,7 @@ int controller_parse_ms(const char *text, uint32_t minimum, uint32_t maximum,
     return 0;
 }
 
-/* Return 1 for quit, -1 for a controller error, 0 to continue. */
+/* 반환값: 1은 종료, -1은 장치 오류, 0은 계속 실행. */
 
 int controller_command(struct controller *controller, char *line, bool *known_running,
                        bool encoder_enabled, bool reverse_encoder, const volatile sig_atomic_t *stop_signal)

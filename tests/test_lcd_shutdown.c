@@ -67,9 +67,7 @@ int main(void)
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     assert(elapsed >= 1.9 && elapsed < 3.5);
-    /* Production exits the process on timeout. Test releases the mock and
-     * verifies the object was kept alive until the worker actually stopped.
-     */
+    /* 운영은 timeout 뒤 process를 종료한다. 테스트는 mock을 풀어 종료 전까지 객체가 유지되는지 확인한다. */
     pthread_mutex_lock(&gate);
     released = true;
     pthread_cond_signal(&ready);

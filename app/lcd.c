@@ -95,9 +95,7 @@ static int port_write(int fd, const uint8_t *bytes, size_t length)
         errno = EIO;
         return -1;
     }
-    /* A partial/failed I2C transaction may already have strobed E. Do not
-     * retry individual bytes and silently desynchronize the 4-bit protocol.
-     */
+    /* 실패한 I²C 전송도 E를 이미 strobe했을 수 있다. 부분 byte 재전송으로 4-bit protocol을 깨뜨리지 않는다. */
     return 0;
 }
 
@@ -113,11 +111,11 @@ static int byte_write(int fd, uint8_t value, bool data)
 
 static int initialize(int fd)
 {
-    const uint8_t initial = 0x08U; /* RW/E low, backlight on. */
+    const uint8_t initial = 0x08U; /* RW/E는 LOW로 두고 backlight를 켠다. */
     if (port_write(fd, &initial, 1) < 0)
         return -1;
     delay_us(50000);
-    /* HD44780 instruction initialization when power-on reset is unreliable. */
+    /* 전원 초기화가 불완전한 경우를 위한 HD44780 instruction 초기화. */
     for (unsigned int i = 0; i < 4; ++i)
     {
         uint8_t nibble = (i == 3 ? 0x20U : 0x30U) | 0x08U;
@@ -183,7 +181,7 @@ static void *worker(void *argument)
             failure = errno;
             goto finish;
         }
-        /* Never use I2C_SLAVE_FORCE: respect existing kernel consumers. */
+        /* 기존 커널 consumer를 존중하며 I2C_SLAVE_FORCE로 우회하지 않는다. */
         if (ioctl(fd, I2C_SLAVE, display->address) < 0 || initialize(fd) < 0)
         {
             failure = errno;
@@ -259,9 +257,7 @@ int lcd_start(struct lcd_display **result, const char *bus, unsigned int address
         errno = ret;
         return -1;
     }
-    /* Main owns the process control-signal flag/self-pipe. The worker must
-     * not inherit unblocked control signals, including after a join timeout.
-     */
+    /* 제어 신호와 self-pipe는 main이 소유한다. join timeout 후에도 worker가 제어 신호를 받지 않도록 mask를 상속한다. */
     sigset_t controls, previous_mask;
     sigemptyset(&controls);
     sigaddset(&controls, SIGINT);

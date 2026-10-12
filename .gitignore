@@ -14,5 +14,20 @@ __pycache__/
 /docs/*.pdf
 /docs/img/
 
-# Local archive of superseded investigation notes; current docs are tracked.
+# 과거 조사 원본은 로컬 보관하며 현재 문서만 추적한다.
 /docs/history/
+
+# 로컬 편집기·캐시·가상환경과 임시 파일
+/.vscode/
+/.idea/
+/.venv/
+/.pytest_cache/
+*.swp
+*.swo
+*~
+
+# 자동 생성 compile DB와 core dump
+/compile_commands.json
+/core
+/core.[0-9]*
+*.core

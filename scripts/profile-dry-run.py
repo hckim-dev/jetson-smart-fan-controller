@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small repeatable CPU/memory sample. Never opens GPIO, PWM or I2C."""
+"""GPIO/PWM/I²C 접근 없이 재현 가능한 CPU·메모리 표본을 수집한다."""
 
 import json
 import pathlib

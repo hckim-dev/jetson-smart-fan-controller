@@ -59,26 +59,30 @@ SET_AUTO는 같은 mutex 안에서 보호 정지 latch와 BOOTTIME sample age를
 
 `misc_deregister`와 driver lock 순서를 분리하고, remove는 removed flag를 설정해 이후 fd의 devm 자원 접근을 차단합니다. kref가 마지막 fd까지 상태 객체의 수명을 유지합니다. delayed work 취소는 mutex 밖에서 기다립니다.
 
-## IPC와 종료
+## 프로세스·IPC와 종료
 
-센서 IPC는 magic, sequence, errno, temperature(m°C), pressure(Pa), reserved, BOOTTIME timestamp를 가진32-byte native-local frame입니다. 외부 네트워크 wire protocol이 아닙니다. Partial read/EAGAIN/잘린 EOF/범위/순번을 검사합니다. 협력적인 sensor reader끼리는 flock으로 같은 센서 conversion을 중복 수행하지 않습니다. LCD는 다른 주소를 사용하며 이 lock에 참여하지 않습니다.
+Sensor child는 I²C fd/센서 lock과 pipe write end를, main은 read end/PID와 모터 fd를 소유합니다. `pipe2(O_CLOEXEC)`→fork→dup2(stdout)→execv로 시작합니다. Fork caller는 제어 신호를 차단하고 child는 상속한 handler를 default로 바꾼 뒤 mask를 복원합니다. Exec 전에는 async-signal-safe 연산만 수행합니다. 모터/GPIO/self-pipe fd는 exec 자식에 전달하지 않습니다.
 
-Fork caller는 control signal을 잠시 차단합니다. Child는 상속된 main 핸들러를 default로 바꾸고 signal을 해제한 뒤 exec합니다. Exec 이후 worker가 자체 핸들러와 PR_SET_PDEATHSIG를 설정합니다. 실패한 exec는 errno frame을 보냅니다. 단순 프로세스 개수 증가가 목적이 아니라, sensor I²C blocking을 heartbeat 경로에서 분리하기 위한 구조입니다.
+Sample은 native-local 고정32바이트이며 magic/sequence/errno/온도(m°C)/기압(Pa)/reserved/BOOTTIME을 포함합니다. Partial read·EAGAIN·중간 EOF·범위·순번을 검사합니다. Exec 실패도 errno frame으로 전송합니다. Child는 parent-death SIGTERM과 parent PID 재검사로 부모의 갑작스러운 종료를 처리합니다. 센서 reader의 flock은 협력적 중복 conversion 방지이며 LCD는 참여하지 않습니다.
 
-종료 순서는 motor OFF/fd close → sensor SIGTERM/필요 시 SIGKILL·waitpid → LCD final OFF/join입니다. LCD worker는 control signal을 차단하고 main이 signal flag/self-pipe를 소유합니다. Join은 MONOTONIC 기준2초를 기다리며 timeout 후 살아 있는 worker 객체를 free하지 않습니다. Kernel I²C의 uninterruptible 작업까지 종료 시간을 보장하지는 않습니다.
+센서 I²C 대기를 heartbeat 경로와 분리하기 위해 process/pipe를 사용합니다. Main만 모터/모드를 변경하며 fault/stale은 AUTO를 disarm합니다. 정상 sample만으로 재기동하지 않고 child 자동 respawn도 없습니다. 센서 자원 정체를 해결했다고 가정해 임의로 새 child를 생성하지 않습니다.
 
-## 성능·유지보수 판단
+종료는 motor OFF/fd close→sensor SIGTERM→필요 시 SIGKILL/waitpid→pipe close→LCD join→log drain/join 순서입니다. Read end를 먼저 닫으면 전송 중 child가 SIGPIPE로 종료될 수 있어 회수 시도까지 유지합니다. 종료 신호가 blocked write를 중단한 경우 monitor는 정상 정리로 처리합니다. 자식 회수 기한을 넘기면 PID를 보존하고 실패를 표시합니다. Uninterruptible I²C 대기는 SIGKILL로 즉시 끝난다고 보장할 수 없습니다.
 
-Main은50ms poll 주기, heartbeat는 lease/4(최대250ms), sensor는 측정 후 약1초 대기, encoder는 read당최대32events입니다. LCD는 최신 snapshot을 coalesce하고 달라진 행만 전송합니다. 정상 sensor 값은 반복 출력하지 않아 명령 화면을 보존합니다.
+## 스레드·로그 동기화
 
-현재 규모에서 epoll, 공유 메모리, 추가 daemon 또는 대규모 클래스 구조로 바꿀 근거는 없습니다. `main.c`는 실행 흐름과 자원 수명, `controller.c`는 MANUAL/AUTO 정책과 명령 처리, `fan-device.c`는 ioctl과 dry-run 모델을 담당합니다. 기존 단일 poll 루프와 커널 보호 정책은 유지합니다.
+LCD는 한 mutex 아래에서 최신 snapshot을 복사한 뒤 lock 밖에서 I²C를 수행합니다. 변경된 행만 전송하며 publish는 전송을 기다리지 않습니다. 종료 후 새 publish는 무시합니다. MONOTONIC 기준2초 join이 실패하면 살아 있는 객체를 free하지 않습니다.
 
-Process 생성·IPC·종료 status 및 회수 지연 시 PID 보존의 상세 검증은 [6단계](stage6-process-ipc.md)를 참조합니다.
+선택형 log는 128개×256바이트 FIFO이며 record를 복사합니다. Queue/head/count/stopping/error/counter는 mutex로 보호하고 condition predicate는 while로 검사합니다. File write/close는 lock 밖에서 writer만 수행하며 partial write/EINTR을 처리합니다. 포화 시 새 record를 버리고 dropped를 올려 제어 경로가 queue 공간을 기다리지 않게 합니다. Regular append-only 파일만 허용하고 symlink/FIFO/device는 거부합니다.
 
-## 선택형 log worker
+Log join은 tryjoin과 2초 MONOTONIC 기한을 사용하고 실패 시 살아 있는 객체를 유지합니다. Producer는 join 전에 중단합니다. Worker는 controller/device 상태를 직접 읽거나 변경하지 않습니다. Control signal은 worker 생성 시 mask로 차단하며 signal handler는 flag/self-pipe만 사용합니다. Log/Mutex/condition API를 handler에서 호출하지 않습니다.
 
-`--log PATH`는 main이 제출한 record를 고정 크기 queue에 복사하고, 별도 worker가 파일 I/O를 수행합니다. Queue와 stats는 Mutex로 보호하고 condition으로 통지합니다. Worker는 controller/device 상태를 직접 읽거나 변경하지 않습니다. 센서 fork는 LCD/log thread 생성 전에 수행합니다. Log의 drain/join은 모터 정지와 sensor/LCD cleanup 이후입니다. 자세한 소유권과 timeout 정책은 [7단계](stage7-threads.md)를 따릅니다.
+Written은 완전한 record의 write 완료이며 fsync나 전원 장애의 영속성 보장이 아닙니다. 부분 쓰기 후 실패하면 파일 끝에 불완전한 record가 남을 수 있습니다. Rotation은 없으므로 장기 운전 시 용량을 관리해야 합니다. Queue 포화·SIGKILL·쓰기 실패에는 종료 summary도 보존을 보장하지 않습니다.
 
-## 운영 통계와 Monitor
+## 운영 가시성과 확장 판단
 
-Session counters는 controller에 두고 main 문맥에서만 갱신합니다. 센서 장애의 관찰 상태는 terminal 통지 상태와 분리합니다. CLI Monitor는 heartbeat 다음에 main poll loop에서 기한을 확인하며 기본 OFF이고 추가 thread를 생성하지 않습니다. Logger snapshot만 기존 mutex로 복사합니다. 상세 정의와 원자 snapshot의 한계는 [8단계](stage8-operations.md)를 따릅니다.
+Session counter는 main 소유이며 terminal 통지용 상태와 별도로 장애 구간을 관찰합니다. CLI Monitor는 main에서 heartbeat 뒤에 기한을 검사하고 기본 OFF이며 추가 thread를 만들지 않습니다. Logger snapshot만 기존 mutex 아래에서 복사합니다. 명령과 통계 정의는 [빌드·실행](build-run.md)을 따릅니다.
+
+Monitor는 여러 ioctl/sensor/log 조회를 조합하므로 전체 시스템의 원자 snapshot이 아닙니다. 출력은 논리 상태이며 실제 RPM/회전의 측정값이 아닙니다. 최종 조회에서 OFF이면 duty를0으로 표시합니다. Stdout/stderr는 동기식이므로 느린 터미널/파이프의 hard real-time 지연을 보장하지 않습니다.
+
+Main은50ms poll, heartbeat는 lease/4(최대250ms), 센서는 측정 후 약1초 대기, encoder는 호출당최대32events입니다. 정상 sensor sample은 반복 출력하지 않으며 monitor도 사용자 요청 때만 켭니다. 현재 규모에서 Shared Memory/Semaphore/하드웨어 watchdog/자동 복구를 추가할 근거보다 검증 비용이 큽니다. Kernel lease는 모터 제어 중단 보호이며 시스템 재부팅 watchdog과는 다릅니다.

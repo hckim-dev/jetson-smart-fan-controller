@@ -64,7 +64,7 @@ static void *worker(void *argument)
         log->head = (log->head + 1U) % EVENT_LOG_CAPACITY;
         --log->count;
         pthread_mutex_unlock(&log->lock);
-        /* File I/O is outside the queue lock. */
+        /* 파일 I/O 중에는 queue mutex를 잡지 않는다. */
         int error = write_record(log->fd, record);
         pthread_mutex_lock(&log->lock);
         if (error)
@@ -226,8 +226,7 @@ int event_log_finish(struct event_log *log, struct event_log_stats *stats)
     else
     {
         deadline.tv_sec += 2;
-        /* GCC 11 TSan intercepts tryjoin but not clockjoin. This remains a
-         * real bounded join, without switching to wall-clock deadlines. */
+        /* GCC11 TSan이 추적하는 tryjoin을 사용하고 MONOTONIC 기한으로 종료 대기를 제한한다. */
         for (;;)
         {
             error = pthread_tryjoin_np(log->thread, NULL);

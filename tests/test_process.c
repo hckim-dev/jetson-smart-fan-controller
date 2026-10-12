@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/prctl.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -92,8 +93,8 @@ static void test_exec_descriptor_isolation(void)
     struct sensor_reader reader;
     assert(sensor_start(&reader, MONITOR, "steady") == 0);
     struct sensor_sample sample = next_sample(&reader);
-    assert(!sample.error);              /* Fixture checks the guard before opening its fd. */
-    assert(fcntl(guard, F_GETFD) >= 0); /* Parent still owns it. */
+    assert(!sample.error);              /* fixture가 자신의 fd를 열기 전에 guard fd 격리를 검사한다. */
+    assert(fcntl(guard, F_GETFD) >= 0); /* 부모는 fd를 계속 소유한다. */
     sensor_stop(&reader);
     close(guard);
     assert(unsetenv("SMARTFAN_TEST_GUARD_FD") == 0);
@@ -118,7 +119,7 @@ static void test_failure_and_control(void)
     wait_reaped(&controller.sensor);
     assert(WIFEXITED(controller.sensor.wait_status) && WEXITSTATUS(controller.sensor.wait_status) == 1);
     sensor_stop(&controller.sensor);
-    /* Explicitly restart only the fixture: fresh data must not rearm AUTO. */
+    /* fixture 센서만 복구해도 AUTO가 다시 arm되면 안 된다. */
     assert(sensor_start(&controller.sensor, MONITOR, "steady") == 0);
     controller.sample = next_sample(&controller.sensor);
     assert(controller_auto_tick(&controller) == 0);
@@ -132,12 +133,33 @@ static void test_failure_and_control(void)
     sensor_stop(&controller.sensor);
     puts("PASS process: IPC sensor error disarms AUTO; fresh recovery needs explicit ON");
 }
+static void test_stop_with_full_pipe(void)
+{
+    struct sensor_reader reader;
+    assert(sensor_start(&reader, MONITOR, "fast") == 0);
+    int capacity = fcntl(reader.fd, F_GETPIPE_SZ), queued = 0;
+    assert(capacity > 0);
+    uint64_t deadline = fan_now_ms() + 3000;
+    while (queued < capacity && fan_now_ms() < deadline)
+    {
+        assert(ioctl(reader.fd, FIONREAD, &queued) == 0);
+        const struct timespec delay = {.tv_nsec = 1000000};
+        nanosleep(&delay, NULL);
+    }
+    assert(queued == capacity);
+    /* 부모가 읽지 않아 write가 막혀도 SIGTERM으로 정상 종료해야 한다. */
+    sensor_stop(&reader);
+    assert(reader.fd == -1 && reader.pid == 0 && reader.exited);
+    assert(WIFEXITED(reader.wait_status) && WEXITSTATUS(reader.wait_status) == 0);
+    puts("PASS process: full pipe blocked writer terminates cleanly without SIGPIPE");
+}
+
 static void test_forced_stop(void)
 {
     struct sensor_reader reader;
     assert(sensor_start(&reader, MONITOR, "ignore-term") == 0);
     pid_t pid = reader.pid;
-    next_sample(&reader); /* SIGTERM ignore installed after exec. */
+    next_sample(&reader); /* exec 뒤 SIGTERM 무시 설정을 완료한 상태. */
     sensor_stop(&reader);
     assert(reader.pid == 0 && reader.exited);
     assert(WIFSIGNALED(reader.wait_status) && WTERMSIG(reader.wait_status) == SIGKILL);
@@ -146,7 +168,7 @@ static void test_forced_stop(void)
 }
 static void test_parent_death(void)
 {
-    /* Adopt the production monitor when its immediate parent is killed. */
+    /* 직접 부모가 강제 종료된 monitor를 subreaper가 받아 회수를 검증한다. */
     assert(prctl(PR_SET_CHILD_SUBREAPER, 1) == 0);
     int report[2];
     assert(pipe2(report, O_CLOEXEC) == 0);
@@ -159,10 +181,10 @@ static void test_parent_death(void)
         assert(prctl(PR_SET_PDEATHSIG, SIGKILL) == 0 && getppid() == owner);
         struct sensor_reader reader;
         assert(sensor_start(&reader, MONITOR, "steady") == 0);
-        next_sample(&reader); /* PR_SET_PDEATHSIG and parent check completed. */
+        next_sample(&reader); /* parent-death 신호와 PID 검사를 완료한 상태. */
         assert(write(report[1], &reader.pid, sizeof(reader.pid)) == sizeof(reader.pid));
         for (;;)
-            pause(); /* Parent will be killed without sensor_stop. */
+            pause(); /* sensor_stop 없이 부모를 강제 종료한다. */
     }
     close(report[1]);
     struct pollfd descriptor = {.fd = report[0], .events = POLLIN};
@@ -181,7 +203,10 @@ static void test_parent_death(void)
         struct timespec delay = {.tv_nsec = 1000000};
         nanosleep(&delay, NULL);
     }
-    assert(result == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    assert(result == child);
+    /* 갑작스러운 부모 종료는 SIGPIPE와 경합할 수 있으나 잔류 자식은 없어야 한다. */
+    assert((WIFEXITED(status) && WEXITSTATUS(status) == 0) ||
+           (WIFSIGNALED(status) && (WTERMSIG(status) == SIGTERM || WTERMSIG(status) == SIGPIPE)));
     assert(prctl(PR_SET_CHILD_SUBREAPER, 0) == 0);
     puts("PASS process: production monitor exits after parent death; no orphan remains");
 }
@@ -190,6 +215,7 @@ int main(void)
     test_delivery_and_stop();
     test_exec_descriptor_isolation();
     test_failure_and_control();
+    test_stop_with_full_pipe();
     test_forced_stop();
     test_parent_death();
     return 0;

@@ -47,11 +47,11 @@ static void test_fork_failure(void)
     for (unsigned int i = 0; i < 3; ++i)
         assert(sigismember(&before, signals[i]) == sigismember(&after, signals[i]));
     int fd = open("/dev/null", O_RDONLY);
-    assert(fd == next_fd); /* Neither pipe end leaked. */
+    assert(fd == next_fd); /* pipe 양쪽 fd가 누수되지 않았다. */
     close(fd);
 }
 
-/* Hold the real fork child in the pre-exec window, without GPIO/I2C. */
+/* I²C/GPIO 없이 실제 fork 자식을 exec 직전 구간에 멈춘다. */
 int __wrap_execv(const char *path, char *const argv[])
 {
     if (strcmp(path, "test-pre-exec-window"))
@@ -100,9 +100,7 @@ static void test_pre_exec_termination(void)
     double elapsed = monotonic_seconds() - start;
     assert(sigaction(SIGTERM, &previous, NULL) == 0);
     printf("pre-exec SIGTERM cleanup: %.3fs\n", elapsed);
-    /* Verify disposition/mask directly rather than a scheduler-sensitive
-     * wall-clock assertion. The child is ready to terminate on SIGTERM.
-     */
+    /* scheduler에 민감한 시간 단정보다 disposition/mask를 직접 검증한다. 자식은 SIGTERM을 받을 준비가 됐다. */
     assert(reader.fd == -1 && reader.pid == 0);
 }
 
@@ -122,10 +120,21 @@ static void test_deferred_reap(void)
     assert(result == 1);
     pid_t pid = reader.pid;
     defer_reap = 1;
-    sensor_stop(&reader); /* Simulate waitpid still pending after deadline. */
+    /* 예상 경고는 숨기지 않고 내용까지 검증해 정상 테스트 출력과 구분한다. */
+    int captured[2], saved_stderr = dup(STDERR_FILENO);
+    assert(saved_stderr >= 0 && pipe2(captured, O_CLOEXEC) == 0);
+    assert(dup2(captured[1], STDERR_FILENO) == STDERR_FILENO);
+    close(captured[1]);
+    sensor_stop(&reader); /* 기한 이후에도 waitpid가 대기 중인 상황을 재현한다. */
+    assert(dup2(saved_stderr, STDERR_FILENO) == STDERR_FILENO);
+    close(saved_stderr);
+    char warning[256] = {0};
+    assert(read(captured[0], warning, sizeof(warning) - 1) > 0);
+    close(captured[0]);
+    assert(strstr(warning, "WARN sensor child has not exited"));
     assert(reader.fd == -1 && reader.pid == pid && !reader.exited);
     defer_reap = 0;
-    sensor_stop(&reader); /* Cleanup ownership must survive the first attempt. */
+    sensor_stop(&reader); /* 첫 정리 실패 뒤에도 PID 소유권이 유지돼야 한다. */
     assert(reader.pid == 0 && reader.exited);
     puts("PASS pending child: PID retained until waitpid succeeds; cleanup retry");
 }
@@ -160,7 +169,7 @@ int main(void)
     assert(sensor_next(&reader, &received, 1000) == -1 && errno == EPIPE);
     sensor_stop(&reader);
 
-    /* EOF in the middle of a frame must be a protocol error, not clean EOF. */
+    /* frame 중간 EOF는 정상 EOF가 아닌 protocol 오류다. */
     assert(pipe2(pipefd, O_NONBLOCK | O_CLOEXEC) == 0);
     reader = (struct sensor_reader){.fd = pipefd[0]};
     assert(write(pipefd[1], &source, 7) == 7);
@@ -169,7 +178,7 @@ int main(void)
     assert(sensor_next(&reader, &received, 1000) == -1 && errno == EPROTO);
     sensor_stop(&reader);
 
-    /* Exercise the real fork/exec/IPC/error/reap path without touching I2C. */
+    /* 실제 fork/exec/IPC/error/reap 경로를 I²C 접근 없이 검증한다. */
     assert(sensor_start(&reader, "build/bmp180-monitor", "/dev/null/not-an-i2c-bus") == 0);
     const struct timespec interval = {.tv_nsec = 1000000L};
     int result = 0;
@@ -200,7 +209,7 @@ int main(void)
             nanosleep(&interval, NULL);
     }
     assert(result == 1 && received.error == ENOTDIR);
-    /* Let exec failure exit naturally; SIGTERM must not race the expected 127. */
+    /* exec 실패의 자연 종료를 기다려 SIGTERM과 exit127이 경쟁하지 않게 한다. */
     for (unsigned int i = 0; i < 1000 && reader.pid; ++i)
     {
         sensor_reap(&reader);

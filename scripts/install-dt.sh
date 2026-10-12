@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install a reviewed boot proposal. No module load, GPIO or reboot.
+# 검증한 boot 제안을 설치한다. module 적재·GPIO 제어·재부팅은 수행하지 않는다.
 set -euo pipefail
 
 task_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -150,7 +150,7 @@ install -m 0644 -- "$task_cfg_proposal" "$task_tmp_cfg"
 cmp -s -- "$task_dtb_proposal" "$task_tmp_dtb"
 cmp -s -- "$task_cfg_proposal" "$task_tmp_cfg"
 
-# Publish the new DTB before the config that selects it.
+# 설정이 새 DTB를 가리키기 전에 DTB부터 설치한다.
 mv -f -- "$task_tmp_dtb" "$task_dtb"
 task_tmp_dtb=
 mv -f -- "$task_tmp_cfg" "$task_cfg"

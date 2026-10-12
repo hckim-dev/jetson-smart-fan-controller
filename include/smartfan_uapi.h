@@ -59,7 +59,7 @@ struct smartfan_status
 #define SMARTFAN_IOC_HEARTBEAT _IO('F', 2)
 #define SMARTFAN_IOC_GET _IOR('F', 3, struct smartfan_status)
 
-/* Additive ABI: the stage-1 SET/GET structures and commands stay unchanged. */
+/* ABI 확장은 기존 SET/GET 구조와 ioctl 번호를 유지한다. */
 struct smartfan_speed_request
 {
 	__u32 abi_version;
@@ -101,7 +101,7 @@ struct smartfan_led_status
 #define SMARTFAN_IOC_SET_LEDS _IOW('F', 6, struct smartfan_led_request)
 #define SMARTFAN_IOC_GET_LEDS _IOR('F', 7, struct smartfan_led_status)
 
-/* Atomic AUTO update. Only an explicit operator ON sets rearm=1. */
+/* 원자적 AUTO 갱신. 사용자의 명시적 ON만 rearm=1을 설정한다. */
 struct smartfan_auto_request
 {
 	__u32 abi_version;
@@ -122,14 +122,14 @@ static inline int smartfan_auto_rearm_allowed(int inhibited, __u32 explicit_rear
 	return !inhibited || explicit_rearm == 1U;
 }
 
-/* Fill from segment 1: levels 0..5 -> 0,2,4,5,7,8 segments. */
+/* 풍속 0..5의 LED 칸 수는 0,2,4,5,7,8이며 첫 칸부터 채운다. */
 static inline __u32 smartfan_level_leds(__u32 level)
 {
 	return (level * SMARTFAN_LED_SEGMENTS + SMARTFAN_MAX_SPEED_LEVEL - 1U) /
 		   SMARTFAN_MAX_SPEED_LEVEL;
 }
 
-/* Duty targets for levels 0..5; calibration requires a motor test. */
+/* 풍속별 duty 목표이며 실제 RPM 보정값은 아니다. */
 static inline __u32 smartfan_level_duty(__u32 level)
 {
 	return level ? 50U + level * 10U : 0U;

@@ -20,7 +20,7 @@ int main(void)
     uint64_t time = 0;
     encoder_filter_init(&filter, 0, time, 1000);
     assert(hold(&filter, 0, &time) == 0 && filter.ready);
-    /* Short excursions must not reach the decoder. */
+    /* 짧은 잡음은 decoder에 전달되면 안 된다. */
     time += 100;
     assert(encoder_filter_sample(&filter, 2, time) == 0);
     time += 900;
@@ -43,7 +43,7 @@ int main(void)
         sum += hold(&filter, ccw[i], &time);
     assert(sum == -1 && filter.accepted_changes == 8);
 
-    /* An unsampled interval cannot certify stability or complete a cycle. */
+    /* 관찰 공백으로 안정성이나 cycle 완료를 증명할 수 없다. */
     assert(hold(&filter, 2, &time) == 0);
     time += 2000;
     assert(encoder_filter_sample(&filter, 3, time) == 0);

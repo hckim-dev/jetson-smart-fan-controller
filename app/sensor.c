@@ -35,10 +35,7 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
     snprintf(parent, sizeof(parent), "%ld", (long)getpid());
     if (pipe2(pipefd, O_CLOEXEC) < 0)
         return -1;
-    /* Block control signals in the fork caller until the child has replaced
-     * inherited controller handlers. Otherwise an early SIGTERM can invoke
-     * the parent's flag/self-pipe handler and be lost before exec.
-     */
+    /* fork~exec 사이에 부모 신호 handler가 자식 SIGTERM을 소비하지 않도록 제어 신호를 차단한다. */
     sigset_t controls, previous_mask;
     sigemptyset(&controls);
     sigaddset(&controls, SIGINT);
@@ -64,9 +61,7 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
     }
     if (!pid)
     {
-        /* Even if the parent has threads, only async-signal-safe operations
-         * occur before exec. All controller/I2C descriptors are CLOEXEC.
-         */
+        /* exec 전에는 async-signal-safe 연산만 사용한다. 제어/I²C fd는 CLOEXEC으로 격리한다. */
         close(pipefd[0]);
         struct sigaction action = {.sa_handler = SIG_DFL};
         sigemptyset(&action.sa_mask);
@@ -88,9 +83,7 @@ int sensor_start(struct sensor_reader *reader, const char *program, const char *
         char *const args[] = {(char *)program, "--stream", "--bus", (char *)bus,
                               "--parent-pid", parent, NULL};
         execv(program, args);
-        /* exec failure is still a valid IPC error frame; no unsafe stdio
-         * after fork, and no ambiguous EOF-only diagnosis in the parent.
-         */
+        /* exec 실패도 errno frame으로 전달한다. fork 직후 stdio를 사용하거나 EOF만으로 원인을 추측하지 않는다. */
         struct sensor_sample failure = {.magic = SENSOR_MAGIC, .sequence = 1, .error = errno};
         ssize_t written;
         do
@@ -148,8 +141,7 @@ int sensor_next(struct sensor_reader *reader, struct sensor_sample *sample, uint
     return 1;
 }
 
-/* waitpid owns reaping. Retain the PID until reaped (or ECHILD), never
- * discard ownership merely because a termination signal was sent. */
+/* waitpid 회수 또는 ECHILD를 확인할 때까지 PID를 유지한다. 신호를 보냈다는 이유로 소유권을 버리지 않는다. */
 static bool collect_child(struct sensor_reader *reader)
 {
     int status;
@@ -177,20 +169,22 @@ void sensor_reap(struct sensor_reader *reader)
 
 void sensor_stop(struct sensor_reader *reader)
 {
-    if (reader->fd >= 0)
-        close(reader->fd);
-    reader->fd = -1;
     if (reader->pid <= 0 || collect_child(reader))
-        return;
+        goto close_pipe;
+    /* 전송 중인 자식을 SIGPIPE로 종료시키지 않도록 회수까지 read end를 유지한다. */
     kill(reader->pid, SIGTERM);
     const struct timespec delay = {.tv_nsec = 10000000L};
     for (unsigned int i = 0; i < 100; ++i)
     {
         if (collect_child(reader))
-            return;
+            goto close_pipe;
         if (i == 50)
             kill(reader->pid, SIGKILL);
         nanosleep(&delay, NULL);
     }
     fputs("WARN sensor child has not exited; kernel I2C operation may still be pending\n", stderr);
+close_pipe:
+    if (reader->fd >= 0)
+        close(reader->fd);
+    reader->fd = -1;
 }

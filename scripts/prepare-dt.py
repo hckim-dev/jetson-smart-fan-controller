@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an offline LCD/LED Bar/PWM DT update; never write to /boot."""
+"""LCD/LED/PWM DT의 offline 제안만 준비하며 /boot에는 쓰지 않는다."""
 
 import hashlib
 import pathlib
@@ -44,7 +44,7 @@ def properties(dtb, node):
 
 
 def snapshot_node(dtb, node):
-    """Compare protected subtrees without assuming their property types."""
+    """속성 타입을 추측하지 않고 보호 대상 subtree를 비교한다."""
     result = {
         prop: get_property(dtb, node, prop, "bx")
         for prop in properties(dtb, node)
@@ -68,7 +68,7 @@ def assert_property(dtb, node, prop, expected, kind="s"):
         raise ValueError(f"Unexpected {node}:{prop}: {actual!r}, expected {expected!r}")
 
 
-def check_stage2(dtb):
+def check_controller_dt(dtb):
     assert_property(dtb, "/smartfan", "compatible", "edu,jetson-smartfan")
     assert_property(dtb, "/smartfan", "pinctrl-names", "default")
     assert_property(
@@ -178,9 +178,9 @@ def main():
             if not pathlib.Path(name).is_file():
                 raise ValueError(f"Existing boot overlay is missing: {name}")
 
-    # If stage 2 is already the selected boot entry, rebuild from its preserved
-    # stage-1 fallback rather than applying the overlay on top of itself. This
-    # makes prepare/check safely repeatable after installation.
+    # 관리 중인 boot entry가 활성화돼 있으면 보존한 fallback을 base로 사용한다.
+    # 자신의 overlay를 다시 겹쳐 적용하지 않아 준비 작업을 반복할 수 있다.
+
     preparation_base = base
     if defaults[0] in {
         LABEL,
@@ -219,7 +219,7 @@ def main():
             [
                 "fdtoverlay",
                 "-i",
-                str(base),
+                str(preparation_base),
                 "-o",
                 str(effective_base),
                 *existing_overlays,
@@ -227,8 +227,8 @@ def main():
             check=True,
         )
 
-    # The PWM driver reselects default/sleep on runtime resume/suspend. Refuse
-    # an unexpected existing state instead of replacing another user's pins.
+    # PWM resume/suspend가 pad 상태를 다시 선택하므로 다른 소유자의 상태는 덮어쓰지 않는다.
+
     pwm_props = properties(effective_base, PWM_NODE)
     if "pinctrl-names" in pwm_props:
         assert_property(effective_base, PWM_NODE, "pinctrl-names", "default")
@@ -274,13 +274,13 @@ def main():
         ],
         check=True,
     )
-    # DT overlays do not delete an existing base-tree property with
-    # /delete-property/. Remove the stage-1 IN1 descriptor from this offline copy.
+    # overlay의 /delete-property/로 base 속성이 지워지지 않아 offline 복사본에서 제거한다.
+
     if "in1-gpios" in properties(merged, "/smartfan"):
         subprocess.run(
             ["fdtput", "-d", str(merged), "/smartfan", "in1-gpios"], check=True
         )
-    check_stage2(merged)
+    check_controller_dt(merged)
     if {
         prop: get_property(merged, PINMUX, prop, "bx")
         for prop in properties(merged, PINMUX)
@@ -288,8 +288,8 @@ def main():
         raise ValueError("Pinmux provider properties changed")
     if snapshot_node(merged, protected_paths[1]) != raw_builtin_pwm:
         raise ValueError("Built-in fan PWM provider changed")
-    # The bootloader applies retained overlays after loading the proposed FDT.
-    # Validate that effective order too, while leaving the FDT/entry split intact.
+    # bootloader와 같은 순서로 기존 overlay까지 적용한 최종 상태를 검증한다.
+
     effective = merged
     if existing_overlays:
         effective = BUILD / "smartfan-effective-board.dtb"
@@ -297,9 +297,9 @@ def main():
             ["fdtoverlay", "-i", str(merged), "-o", str(effective), *existing_overlays],
             check=True,
         )
-    check_stage2(effective)
-    # Applying an existing overlay can renumber its local phandles. Verify
-    # the resolved state and its contents, rather than numeric IDs.
+    check_controller_dt(effective)
+    # overlay 적용은 phandle 번호를 바꿀 수 있으므로 실제 연결 대상과 내용을 비교한다.
+
     assert_property(
         effective,
         PINMUX,
@@ -317,8 +317,8 @@ def main():
             "Header I2C properties/children changed beyond clock-frequency"
         )
 
-    # Preserve the currently selected boot entry as a fallback. Repeated
-    # preparation updates our own entry instead of creating duplicate labels.
+    # 현재 boot entry는 fallback으로 보존하고 자신의 entry만 갱신해 중복 LABEL을 막는다.
+
     new_entry = re.sub(r"^LABEL\s+\S+", "LABEL " + LABEL, entry, count=1)
     new_entry = re.sub(
         r"^(\s*MENU LABEL)[^\n]*",

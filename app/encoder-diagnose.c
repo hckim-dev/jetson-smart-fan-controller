@@ -18,10 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Independent of encoder.c: count kernel records and sample the same requested
- * inputs, without Gray decoding, sequence-gap recovery or timestamp filtering.
- * No output request, module load, DT installation or register writes.
- */
+/* encoder.c와 독립적으로 같은 입력의 커널 event/level을 검사한다. Gray 해석·출력 요청·레지스터 쓰기는 수행하지 않는다. */
 static volatile sig_atomic_t stopped;
 static void stop(int signum) { stopped = signum; }
 
@@ -93,9 +90,7 @@ static uint32_t be32(const unsigned char *bytes)
            ((uint32_t)bytes[2] << 8) | bytes[3];
 }
 
-/* Check the live DT resource before mapping known Tegra234 control registers.
- * Security bank 0x2200000 is NOT the GPIO control bank 0x2210000.
- */
+/* 알려진 Tegra234 제어 레지스터를 읽기 전에 실제 DT 자원을 검사한다. 보안 bank 0x2200000과 GPIO 제어 bank 0x2210000을 구분한다. */
 static void *map_gpio_registers(void)
 {
     unsigned char reg[32];
@@ -135,9 +130,7 @@ static void *map_gpio_registers(void)
 
 static void show_registers(void *mapping, const char *phase)
 {
-    /* Tegra234 H = bank4/port1, pin7; I = bank4/port2, pin1.
-     * bank*0x1000 + port*0x200 + pin*0x20 (gpio-tegra186.c).
-     */
+    /* Tegra234 H는 bank4/port1/pin7, I는 bank4/port2/pin1이다. 주소식은 bank*0x1000 + port*0x200 + pin*0x20이다. */
     static const unsigned int offsets[] = {0x42e0, 0x4420};
     if (mapping == MAP_FAILED)
         return;

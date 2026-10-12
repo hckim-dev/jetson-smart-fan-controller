@@ -47,7 +47,7 @@ int main(void)
     assert(lcd_start(&display, "/dev/i2c-7", 0x27, true) == 0);
     lcd_publish(display, false, 5, 0);
     lcd_finish(display);
-    /* This path cannot be a device: verify worker errors/cleanup without I2C. */
+    /* 장치가 될 수 없는 경로로 I²C 접근 없이 worker 오류/정리를 검증한다. */
     assert(lcd_start(&display, "/dev/null/not-an-i2c-bus", 0x27, false) == 0);
     const struct timespec interval = {.tv_nsec = 1000000L};
     for (unsigned int i = 0; i < 1000 && !lcd_error(display); ++i)

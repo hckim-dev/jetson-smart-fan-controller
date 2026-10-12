@@ -6,8 +6,7 @@
 #include <stdint.h>
 #include "smartfan_uapi.h"
 
-/* The main loop owns fd lifetime; this module owns device operations and
- * the dry-run model. No GPIO/PWM resources are requested here. */
+/* fd 수명은 main이, ioctl과 dry-run 모델은 이 모듈이 소유한다. GPIO/PWM 자원을 직접 요청하지 않는다. */
 struct fan_device
 {
     int fd;

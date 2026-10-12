@@ -20,7 +20,7 @@ int encoder_filter_sample(struct encoder_filter *filter, unsigned int state,
     if (state > 3U || now_ns < filter->last_sample_ns ||
         now_ns - filter->last_sample_ns > filter->stable_ns)
     {
-        /* Missing observations are not proof that a state stayed stable. */
+        /* 관찰하지 못한 구간은 입력이 안정적이었다는 근거가 아니다. */
         ++filter->gap_resets;
         filter->ready = false;
         filter->decoder.accumulator = 0;

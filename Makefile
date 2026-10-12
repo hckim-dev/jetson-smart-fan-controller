@@ -1,4 +1,4 @@
-# Native build on the target Jetson; override KDIR for a matching prepared tree.
+# Jetson native build. KDIR 변경 시 실행 커널과 일치하는 준비된 tree를 사용한다.
 KDIR ?= /lib/modules/$(shell uname -r)/build
 ifeq ($(origin CC), default)
 CC = gcc
@@ -72,7 +72,7 @@ $(BUILD_DIR)/test_lcd_shutdown: tests/test_lcd_shutdown.c app/lcd.c app/lcd.h | 
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_lcd_shutdown.c $(LDLIBS)
 
 $(PROCESS_FIXTURE): tests/bmp180_process_fixture.c app/bmp180-monitor.c app/bmp180.h app/sensor.h Makefile | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -o $@ app/bmp180-monitor.c tests/bmp180_process_fixture.c $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -Wl,--wrap=nanosleep -o $@ app/bmp180-monitor.c tests/bmp180_process_fixture.c $(LDLIBS)
 
 $(BUILD_DIR)/test_process: tests/test_process.c $(PROCESS_FIXTURE) $(CONTROL_SOURCES) $(CONTROL_HEADERS) app/encoder.c app/encoder.h app/lcd.c app/lcd.h app/sensor.c app/sensor.h Makefile | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Iapp $(LDFLAGS) -pthread -o $@ tests/test_process.c $(CONTROL_SOURCES) app/encoder.c app/lcd.c app/sensor.c $(LDLIBS)
@@ -173,6 +173,7 @@ test: app $(TEST_BINARIES)
 	./$(BUILD_DIR)/test_lcd_concurrency
 	$(PYTHON) tests/test_fanctl.py
 	$(PYTHON) tests/test_build.py
+	$(PYTHON) tests/test_prepare_dt.py
 
 clean:
 	$(MAKE) -C "$(KDIR)" M="$(CURDIR)/driver" clean

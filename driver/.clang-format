@@ -1,0 +1,8 @@
+# 커널 control/struct brace와 탭 들여쓰기를 유지한다.
+BasedOnStyle: LLVM
+BreakBeforeBraces: Linux
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always
+ColumnLimit: 100
+SortIncludes: false

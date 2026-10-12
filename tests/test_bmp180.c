@@ -8,7 +8,7 @@
 
 int main(void)
 {
-    /* Bosch BMP180 DS000-09, section 3.5 worked example. */
+    /* Bosch BMP180 DS000-09 3.5절의 보정 예제. */
     const struct bmp180_calibration reference = {
         .ac1 = 408,
         .ac2 = -72,

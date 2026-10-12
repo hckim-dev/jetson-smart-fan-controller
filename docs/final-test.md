@@ -12,7 +12,7 @@ make test
 ./build/bmp180-monitor --once
 ```
 
-C11개, CLI37개, build cleanup1개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
+C11개, CLI37개, build cleanup1개와 DT 제안3개 검사가 통과하고 BMP 온도·기압 한 줄이 나온 뒤 종료돼야 합니다. 통합 실행 중 별도 sensor reader를 띄우지 않습니다.
 
 Driver를 변경한 경우 기존 controller를 종료하고 module을 재적재합니다. App만 변경했으면 재적재할 필요가 없습니다. Module이 없으면 `sudo insmod driver/smartfan.ko`를 실행합니다. 적재 실패 이후 그대로 진행하지 않습니다. 현재 DT는 적용돼 있어 추가 GPIO/PWM export·DT 설치·재부팅은 필요 없습니다.
 
@@ -115,6 +115,8 @@ LCD VCC/5V rail의 정지·기동 전압, 모터/L298N 발열, 전원 정격과 
 
 사용자 확인 날짜·동작·터미널 출력·전압 측정값을 함께 남기면 재현성과 발표 근거가 됩니다. 실물 관찰 없이 checkbox를 채우지 않습니다.
 
-선택형 파일 로그와 thread 종료 검증은 [7단계 절차](stage7-threads.md)를 추가로 실행합니다.
+## 로그·Monitor·Process 마무리 시험
 
-운영 통계와 선택형 주기 출력은 [8단계](stage8-operations.md)의 `stats`, `monitor [500..10000|off]` 명령으로 확인합니다.
+정상 통합 실행에 `--log build/fan-events.log`를 추가합니다. stats→monitor1000→MANUAL 풍속/회전→off→monitor off→quit를 확인합니다. 반복 출력 중에도 명령과 30초 정지가 유지되고 종료 시 LOG_CLOSED dropped=0/error=0 및 SESSION_STATS/STOP 기록이 있어야 합니다. Worker는 main+LCD+log이며 `ps -T -p "$(pgrep -n -x fanctl)" -o pid,tid,stat,comm`으로 확인할 수 있습니다.
+
+`ps -o pid,ppid,stat,args -C fanctl -C bmp180-monitor`로 parent/child를 확인합니다. AUTO 구동 중 시작의 실제 SENSOR_PROCESS PID를 지정해 `sudo kill -TERM 실제PID`로 자식만 종료합니다. SENSOR_EXIT/fault와 AUTO OFF/disarm, status 지속, 유효 sensor 없는 ON 거부를 확인합니다. Quit 뒤 재실행하면 정상 sample이 돌아와도 OFF에서 시작해야 합니다. Ctrl+C 종료 뒤 두 process 잔류나 STAT=Z가 없어야 합니다. 이번 변경 후 실물 확인은 사용자 결과를 받아 기록합니다.

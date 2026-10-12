@@ -31,7 +31,7 @@ static void test_event_batches(void)
     unsigned int level;
     int descriptors[2], delta;
 
-    /* Synthetic pipe only: these tests never open a GPIO device. */
+    /* 합성 pipe만 사용하며 실제 GPIO를 열지 않는다. */
     assert(pipe2(descriptors, O_NONBLOCK | O_CLOEXEC) == 0);
     input.fd = descriptors[0];
     encoder_decoder_init(&input.decoder, 0);
@@ -45,7 +45,7 @@ static void test_event_batches(void)
     level = 5;
     for (unsigned int index = 0; index < input.num_steps; ++index)
         level = encoder_clamp_level(level, input.steps[index], 5);
-    assert(level == 4); /* Clamping the sum would incorrectly leave level 5. */
+    assert(level == 4); /* 합계를 clamp하면 단계 5에 잘못 남는다. */
 
     make_cycle(events, 9, false);
     make_cycle(events + 4, 13, true);
@@ -55,7 +55,7 @@ static void test_event_batches(void)
     assert(delta == 0 && input.num_steps == 2);
     assert(input.steps[0] == -1 && input.steps[1] == 1);
     level = encoder_clamp_level(1, input.steps[0], 5);
-    assert(level == 0); /* The OFF transition must reach the motor controller. */
+    assert(level == 0); /* 단계 0 전이는 모터 제어에 순서대로 전달돼야 한다. */
     level = encoder_clamp_level(level, input.steps[1], 5);
     assert(level == 1);
 
@@ -71,14 +71,14 @@ static void test_event_batches(void)
         make_cycle(events + cycle * 4U, 21 + cycle * 4U, true);
     assert(write(descriptors[1], events, sizeof(events)) == (ssize_t)sizeof(events));
     assert(encoder_read(&input, &delta) == 1);
-    assert(input.num_steps == 8 && delta == 8); /* At most 32 events per call. */
+    assert(input.num_steps == 8 && delta == 8); /* 호출당 최대 32개 event를 처리한다. */
     assert(encoder_read(&input, &delta) == 1);
     assert(input.num_steps == 1 && delta == 1);
     delta = 99;
     assert(encoder_read(&input, &delta) == 0);
     assert(input.num_steps == 0 && delta == 0);
 
-    /* Old queued edges through a reseed snapshot must not become new steps. */
+    /* reseed snapshot 이전 edge가 새 step으로 해석되면 안 된다. */
     input.resync_pending = true;
     input.resync_after_ns = 60;
     make_cycle(events, 57, true);
@@ -88,9 +88,7 @@ static void test_event_batches(void)
     assert(encoder_read(&input, &delta) == 1);
     assert(delta == 1 && input.num_steps == 1);
 
-    /* A sequence gap cancels even a completed step earlier in this batch.
-     * Reseeding the synthetic pipe fails ENOTTY, rather than inventing GPIO state.
-     */
+    /* sequence 누락은 같은 batch의 완료 step도 취소한다. 합성 pipe의 reseed는 GPIO 상태를 꾸미지 않고 ENOTTY로 실패한다. */
     make_cycle(events, 65, true);
     make_cycle(events + 4, 70, false);
     assert(write(descriptors[1], events, sizeof(events[0]) * 8U) ==
@@ -133,7 +131,7 @@ int main(void)
     assert(feed(&decoder, bounce, sizeof(bounce) / sizeof(bounce[0])) == 1);
     assert(feed(&decoder, reversal, sizeof(reversal) / sizeof(reversal[0])) == -1);
 
-    /* Invalid two-bit jumps cannot carry a partial cycle into a false step. */
+    /* 잘못된 2-bit 전이가 부분 cycle을 가짜 step으로 이어서는 안 된다. */
     encoder_decoder_init(&decoder, 0);
     assert(encoder_decoder_update(&decoder, 2) == 0);
     assert(encoder_decoder_update(&decoder, 1) == 0);
@@ -146,7 +144,7 @@ int main(void)
     assert(encoder_decoder_update(&decoder, 4) == 0);
     assert(decoder.invalid_transitions == 2);
 
-    /* Full cycles decode from every starting phase, without a fixed detent bias. */
+    /* 시작 phase와 무관하게 완전한 cycle을 해석한다. */
     static const unsigned int ring[] = {0, 2, 3, 1};
     for (unsigned int start = 0; start < 4; ++start)
     {

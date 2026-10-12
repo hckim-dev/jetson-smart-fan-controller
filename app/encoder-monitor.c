@@ -98,7 +98,7 @@ static int monitor_stable(struct encoder_input *input, unsigned int stable_us,
             ++cw;
         if (step < 0)
             ++ccw;
-        /* One report per second: a noisy input must not flood the terminal. */
+        /* 입력 잡음이 터미널을 덮지 않도록 초당 한 번만 보고한다. */
         if (now >= next_report)
         {
             double elapsed = (now - start) / 1e9;

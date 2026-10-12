@@ -58,17 +58,13 @@ sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
 
 ## 문서
 
-- [시스템 설계와 동시성](docs/architecture.md)
-- [현재 하드웨어·핀 연결·전원 한계](docs/hardware.md)
-- [빌드·실행·개발 검증](docs/build-run.md)
-- [통합 실물 테스트](docs/final-test.md)
-- [8단계 운영 통계와 CLI Monitor](docs/stage8-operations.md)
-- [7단계 Thread/동기화와 로그](docs/stage7-threads.md)
-- [6단계 Process/IPC 설계와 검증](docs/stage6-process-ipc.md)
-- [개발 과정과 문제 해결](docs/development.md)
-- [발표·포트폴리오용 설명](docs/portfolio.md)
-- [이번 품질 개선 결과](docs/quality-review.md)
-- [현재 완료/미검증 상태](docs/status.md)
+- [시스템 설계·IPC·동기화](docs/architecture.md)
+- [현재 하드웨어·배선·전원 한계](docs/hardware.md)
+- [빌드·실행·명령·통계](docs/build-run.md)
+- [최종 통합 테스트](docs/final-test.md)
+- [개발 과정과 설계 결정](docs/development.md)
+- [발표·포트폴리오 설명](docs/portfolio.md)
+- [최종 검토·검증 결과](docs/review.md)
 
 ## 저장소 구조
 

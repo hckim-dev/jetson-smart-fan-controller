@@ -187,9 +187,7 @@ int main(int argc, char **argv)
                          (!controller.device.dry_run && !lcd_address_selected))))
         goto invalid_options;
 
-    /* Check before pipe2/open: a closed fd0 would otherwise be reused for
-     * the self-pipe/device and silently cease to represent command input.
-     */
+    /* 자원 생성 전에 stdin을 검사한다. 닫힌 fd0이 pipe/device로 재사용되면 명령 입력으로 오인할 수 있다. */
     int stdin_flags = fcntl(STDIN_FILENO, F_GETFL);
     if (stdin_flags < 0 || (stdin_flags & O_ACCMODE) == O_WRONLY)
     {
@@ -264,7 +262,7 @@ int main(int argc, char **argv)
         }
         printf("SENSOR_PROCESS pid=%ld bus=%s address=0x77\n", (long)controller.sensor.pid, sensor_bus);
     }
-    /* Fork the sensor before creating any worker threads. */
+    /* worker thread를 만들기 전에 센서 process를 fork한다. */
     if (log_path)
     {
         if (event_log_start(&controller.log, log_path) < 0)
@@ -487,11 +485,13 @@ int main(int argc, char **argv)
             }
             if (encoder.sequence_gaps != gaps)
                 fputs("WARN encoder event gap: discarded partial cycle and resynchronized\n", stderr);
-            /* Apply every detent in order: a net-zero batch can cross STOP. */
+            /* 합계가 0인 batch도 STOP 경계를 지날 수 있으므로 step을 순서대로 적용한다. */
             for (unsigned int i = 0; i < encoder.num_steps && !received_signal; ++i)
             {
-                if (encoder.steps[i] > 0) ++controller.stats.encoder_cw;
-                else ++controller.stats.encoder_ccw;
+                if (encoder.steps[i] > 0)
+                    ++controller.stats.encoder_cw;
+                else
+                    ++controller.stats.encoder_ccw;
                 if (controller.auto_mode)
                     continue;
                 if (controller_change_level(&controller, encoder.steps[i]) < 0 || controller_print_speed(&controller) < 0)
@@ -530,9 +530,7 @@ int main(int argc, char **argv)
                 break;
             for (ssize_t i = 0; i < count && !done && !received_signal; ++i)
             {
-                /* PTYs may pass Enter as CR when ICRNL is disabled. A CRLF
-                 * pair yields an empty second line, never a duplicate command.
-                 */
+                /* ICRNL이 꺼진 PTY는 Enter를 CR로 전달한다. CRLF의 두 번째 빈 줄은 명령을 중복 실행하지 않는다. */
                 if (bytes[i] == '\n' || bytes[i] == '\r')
                 {
                     if (discarding)
@@ -587,7 +585,7 @@ cleanup:
         close(controller.device.fd);
     sensor_stop(&controller.sensor);
     if (controller.sensor.pid > 0)
-        result = EXIT_FAILURE; /* A pending child is not successful cleanup. */
+        result = EXIT_FAILURE; /* 자식이 남아 있으면 정리가 성공한 것이 아니다. */
     int lcd_cleanup_error = lcd_finish(controller.lcd);
     if (lcd_cleanup_error)
     {
@@ -597,8 +595,7 @@ cleanup:
     if (controller.log)
     {
         struct event_log_stats stats;
-        event_log_submit(controller.log, "SESSION_STATS commands=%" PRIu64 " frames=%" PRIu64
-                         " faults=%" PRIu64 " recoveries=%" PRIu64,
+        event_log_submit(controller.log, "SESSION_STATS commands=%" PRIu64 " frames=%" PRIu64 " faults=%" PRIu64 " recoveries=%" PRIu64,
                          controller.stats.commands, controller.stats.sensor_frames,
                          controller.stats.sensor_faults, controller.stats.sensor_recoveries);
         event_log_submit(controller.log, "STOP reason=%s result=%d", received_signal ? "signal" : exit_reason, result);
@@ -611,7 +608,7 @@ cleanup:
             result = EXIT_FAILURE;
         }
     }
-    /* Block our handlers before closing their write fd to avoid fd reuse races. */
+    /* handler가 재사용된 fd에 쓰지 않도록 신호를 차단한 뒤 self-pipe를 닫는다. */
     sigset_t block;
     sigemptyset(&block);
     sigaddset(&block, SIGINT);

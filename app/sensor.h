@@ -25,12 +25,11 @@ struct sensor_reader
     unsigned char buffer[sizeof(struct sensor_sample)];
 };
 int sensor_start(struct sensor_reader *reader, const char *program, const char *bus);
-/* 1=one complete frame, 0=EAGAIN/partial frame, -1=error/EOF. */
+/* 반환값은 완전한 frame 1, EAGAIN/부분 frame 0, 오류/EOF -1이다. */
 int sensor_next(struct sensor_reader *reader, struct sensor_sample *sample, uint64_t now_ms);
-/* Nonblocking reap retains the raw wait status for exit diagnostics. */
+/* 대기 없이 자식을 회수하고 종료 진단용 raw status를 보존한다. */
 void sensor_reap(struct sensor_reader *reader);
-/* Closes IPC first, SIGTERM then SIGKILL fallback. A still-pending child PID
- * is retained on timeout so cleanup can be retried; never wait indefinitely. */
+/* SIGTERM, 필요 시 SIGKILL로 회수한 뒤 IPC를 닫는다. 기한을 넘긴 PID는 재시도를 위해 유지한다. */
 void sensor_stop(struct sensor_reader *reader);
 unsigned int auto_temperature_level(unsigned int previous, int32_t temperature_mc);
 #endif

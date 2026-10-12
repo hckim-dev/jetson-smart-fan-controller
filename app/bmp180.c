@@ -17,7 +17,7 @@ static int16_t signed16(const uint8_t *p)
     uint16_t value = be16(p);
     return (int16_t)(value >= 0x8000U ? (int32_t)value - 65536 : value);
 }
-/* Defined arithmetic right shift, including negative values and INT64_MIN. */
+/* 음수와 INT64_MIN에서도 동작이 정의된 산술 오른쪽 시프트. */
 static int64_t sar(int64_t value, unsigned int shift)
 {
     int64_t divisor = INT64_C(1) << shift;
@@ -70,9 +70,7 @@ int bmp180_compensate(const struct bmp180_calibration *c, uint32_t ut,
     int64_t x2 = (int64_t)c->mc * 2048 / denominator;
     int64_t b5 = x1 + x2;
     int64_t t = sar(b5 + 8, 4);
-    /* Validate temperature before squaring B6: malformed coefficients must
-     * not turn unbounded intermediate values into signed overflow.
-     */
+    /* B6를 제곱하기 전에 온도를 검증해 잘못된 보정계수의 signed overflow를 막는다. */
     if (t < -400 || t > 850)
         goto range_error;
     int64_t b6 = b5 - 4000;
@@ -162,9 +160,7 @@ int bmp180_open(struct bmp180_device *device, const char *bus)
         return -1;
     unsigned long functions;
     uint8_t id, calibration[22];
-    /* Advisory lock only among our sensor readers. LCD does not take this
-     * lock; the kernel still serializes separate-address I2C transactions.
-     */
+    /* 센서 reader 사이의 advisory lock이다. LCD는 참여하지 않으며 주소가 다른 I²C 전송은 커널이 직렬화한다. */
     if (flock(device->fd, LOCK_EX | LOCK_NB) < 0 ||
         ioctl(device->fd, I2C_FUNCS, &functions) < 0)
         goto fail;

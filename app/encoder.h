@@ -5,13 +5,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ENCODER_S1_OFFSET 50U /* J12 physical 12, PH.07. */
-#define ENCODER_S2_OFFSET 52U /* J12 physical 38, PI.01. */
-/* Tested EC11 + NPN interface uses period 0; clear any previous 1/2ms period. */
+#define ENCODER_S1_OFFSET 50U /* J12 물리 12번, PH.07. */
+#define ENCODER_S2_OFFSET 52U /* J12 물리 38번, PI.01. */
+/* 검증된 EC11+NPN 입력은 기간 0을 사용해 이전 1/2ms 설정을 덮어쓴다. */
 #define ENCODER_DEBOUNCE_US 0U
 #define ENCODER_EVENTS_PER_READ 32U
 
-/* State bit 1 = S1/A; bit 0 = S2/B. CW: 00 -> 10 -> 11 -> 01 -> 00. */
+/* 상태 bit1은 S1/A, bit0은 S2/B이다. CW 순서는 00 → 10 → 11 → 01 → 00. */
 struct encoder_decoder
 {
     unsigned int state;
@@ -36,25 +36,21 @@ struct encoder_input
 };
 
 void encoder_decoder_init(struct encoder_decoder *decoder, unsigned int state);
-/* +/-1 only after a complete four-edge cycle; duplicates/bounce emit no step. */
+/* 4개 edge의 완전한 cycle에서만 +/-1을 반환하며 중복·반동은 step을 만들지 않는다. */
 int encoder_decoder_update(struct encoder_decoder *decoder, unsigned int state);
 unsigned int encoder_clamp_level(unsigned int level, int delta,
                                  unsigned int max_level);
 
-/* NULL chip_path discovers the exact tegra234-gpio label; no output requests. */
+/* chip_path가 NULL이면 정확한 tegra234-gpio label을 찾아 입력만 요청한다. */
 int encoder_open(struct encoder_input *input, const char *chip_path, bool reverse);
-/* Diagnostic variant: debounce_us=0 requests a zero period. Tegra L4T36.5.2
- * still sets the hardware debounce-enable bit; this is not proof of bypass.
- */
+/* 진단용 debounce_us=0은 기간 0 요청이다. L4T36.5.2의 enable bit 유지 때문에 완전한 bypass로 단정하지 않는다. */
 int encoder_open_with_debounce(struct encoder_input *input, const char *chip_path,
                                bool reverse, unsigned int debounce_us);
-/* Diagnostic input-only request; reads levels without relying on IRQ events. */
+/* IRQ에 의존하지 않고 level을 읽는 진단용 입력 요청이다. */
 int encoder_open_levels(struct encoder_input *input, const char *chip_path);
 int encoder_get_levels(struct encoder_input *input, unsigned int *a,
                        unsigned int *b);
-/* 0: EAGAIN/no event, 1: consumed bounded batch, -1: error. delta is the sum;
- * apply input->steps[0..num_steps) in order when clamping a bounded level.
- */
+/* 반환값은 event 없음 0, 제한된 batch 처리 1, 오류 -1이다. 경계값 적용은 delta 합계 대신 steps를 순서대로 사용한다. */
 int encoder_read(struct encoder_input *input, int *delta);
 void encoder_close(struct encoder_input *input);
 

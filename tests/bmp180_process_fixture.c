@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Link the production monitor main against sensor stubs: no I2C/GPIO. */
+/* production monitor에 센서 stub을 링크하며 실제 I²C/GPIO에 접근하지 않는다. */
 #define _GNU_SOURCE
 #include "bmp180.h"
 #include <errno.h>
@@ -9,17 +9,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
-static bool fault;
+static bool fault, fast;
+int __real_nanosleep(const struct timespec *, struct timespec *);
+int __wrap_nanosleep(const struct timespec *delay, struct timespec *remaining)
+{
+    return fast ? 0 : __real_nanosleep(delay, remaining);
+}
 static unsigned int measurements;
 int bmp180_open(struct bmp180_device *device, const char *bus)
 {
     const char *guard = getenv("SMARTFAN_TEST_GUARD_FD");
     if (guard && (fcntl(atoi(guard), F_GETFD) >= 0 || errno != EBADF))
     {
-        errno = EBUSY; /* An inherited controller descriptor survived exec. */
+        errno = EBUSY; /* 제어 fd가 exec 자식에 남아 있으면 격리 실패다. */
         return -1;
     }
+    fast = !strcmp(bus, "fast");
     fault = !strcmp(bus, "fault-after-first");
     if (!strcmp(bus, "ignore-term"))
     {

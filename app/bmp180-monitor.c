@@ -103,10 +103,13 @@ int main(int argc, char **argv)
         sample.timestamp_ms = now_ms();
         if (bmp180_measure(&device, &sample.temperature_mc, &sample.pressure_pa) < 0)
             sample.error = errno;
+        if (stopped)
+            break;
         ++sample.sequence;
         if (emit(&sample, stream) < 0 || sample.error)
         {
-            result = EXIT_FAILURE;
+            /* 종료 신호로 pipe write가 중단된 경우는 정상 정리다. */
+            result = stopped ? EXIT_SUCCESS : EXIT_FAILURE;
             break;
         }
         if (once)

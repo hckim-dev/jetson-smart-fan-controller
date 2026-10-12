@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise artifact cleanup in a disposable project, never the real workspace."""
+"""실제 작업 공간 대신 임시 프로젝트에서 산출물 정리를 검증한다."""
 
 import pathlib
 import shutil

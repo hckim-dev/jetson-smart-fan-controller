@@ -22,7 +22,7 @@ make test
 | `make app`        | C 사용자 프로그램4개                                                                                      |
 | `make module W=1` | matching kernel module, 추가 compiler 검사                                                                |
 | `make dt`         | overlay compile                                                                                           |
-| `make test`       | C11개 + CLI37개 + 격리된 clean 테스트, GPIO/I²C 출력 없음                                                 |
+| `make test`       | C11개 + CLI37개 + clean1개 + DT 제안3개, GPIO/I²C 출력 없음                                               |
 | `make analyze`    | GCC analyzer, 사용자 소스12개                                                                             |
 | `make sanitize`   | encoder/filter/BMP math/sensor lifecycle/AUTO guard/LCD shutdown/process/log/LCD snapshot의 ASan/UBSan9개 |
 | `make clean`      | 알려진 binary/object/overlay 삭제, 로그·사용자 메모·boot proposal 보존                                    |
@@ -83,6 +83,22 @@ bash scripts/install-dt.sh --check
 - BMP helper 오류가 있으면 별도 `./build/bmp180-monitor --once`로 검사합니다. 통합 실행의 센서와 동시에 실행하지 않습니다.
 - LCD 주소/100kHz 조건은 실제 확인한 값을 사용합니다. LCD 실패는 warning으로 알리며 motor control은 계속됩니다.
 
-`make thread-check`는 GCC ThreadSanitizer로 log producer/consumer와 LCD snapshot 동기화를 검사합니다. 파일 기록 옵션과 테스트 범위는 [7단계](stage7-threads.md)를 참고합니다.
+## 명령·로그·통계
 
-운영 통계와 선택형 주기 출력은 [8단계](stage8-operations.md)의 `stats`, `monitor [500..10000|off]` 명령으로 확인합니다.
+선택형 파일 기록은 통합 명령에 `--log build/fan-events.log`를 추가합니다. 기존 파일에 append하고 새 파일은 mode0600으로 생성합니다. sudo로 생성한 파일은 `sudo tail -n 20 build/fan-events.log`로 확인합니다. 종료 시 LOG_CLOSED의 dropped/error를 봅니다. 로그 없이 실행하면 log worker도 생성하지 않습니다.
+
+| 명령                             | 용도                              |
+| -------------------------------- | --------------------------------- |
+| `on` / `off`                     | 명시적 기동/정지                  |
+| `speed 0..5`, `up`, `down`       | MANUAL 풍속 선택; 0은 정지        |
+| `mode manual` / `mode auto`      | 모드 전환 시 OFF/disarm           |
+| `led 0..8` / `led auto`          | 모터 OFF에서 LED 시험 / 자동 표시 |
+| `status`                         | 논리 상태·풍속·센서 확인          |
+| `stats`                          | Session counter와 log snapshot    |
+| `monitor` / `monitor 500..10000` | 기본1000ms / 지정 주기 상태 출력  |
+| `monitor off`                    | 주기 출력만 중단                  |
+| `help` / `quit`                  | 도움말 / 정지·정리 후 종료        |
+
+Stats의 commands는 빈 줄을 제외한 모든 명령을 세며 잘못된 명령과 stats/quit도 포함합니다. sensor_frames는 검증된 IPC frame(error 포함), injected_samples는 dry-run temp입니다. Fault는 error/stale 장애 구간의 진입, recovery는 valid 복귀이며 모터 재기동 횟수가 아닙니다. Encoder counter는 방향 반전이 적용된 step으로 AUTO에서 무시한 실물 입력도 포함하고 CLI up/down은 제외합니다. Counter는 main 소유이며 재실행하면 초기화됩니다. 종료 시 SESSION_STATS를 log에 넣지만 큐 포화/SIGKILL/쓰기 오류에는 보존을 보장하지 않습니다.
+
+`make thread-check`는 TSan의 log/LCD snapshot 스트레스 검사이며 모든 하드웨어 경로의 race 부재를 증명하지는 않습니다. `make test`에는 임시 extlinux 구성으로 fallback base 선택·누락·overlay 불일치 거부를 검사하는 Python3 테스트도 포함합니다.

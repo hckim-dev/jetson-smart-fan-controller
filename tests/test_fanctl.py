@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI integration checks. Always use dry-run; no kernel or hardware access."""
+"""dry-run으로 CLI를 통합 검증하며 커널 장치나 하드웨어에 접근하지 않는다."""
 
 import os
 import pathlib
@@ -223,7 +223,7 @@ class FanctlTests(unittest.TestCase):
                 master, slave = pty.openpty()
                 process = None
                 try:
-                    tty.setraw(slave)  # Enter is not translated to LF.
+                    tty.setraw(slave)  # Enter가 LF로 자동 변환되지 않는 조건이다.
                     process = subprocess.Popen(
                         [str(CLI), "--dry-run", "--bmp180", "--lcd"],
                         stdin=slave,
@@ -299,7 +299,7 @@ class FanctlTests(unittest.TestCase):
             session.send("on\n")
             session.expect("STATE ON")
             session.send("sta")
-            time.sleep(0.9)  # Longer than the lease, shorter than max-on.
+            time.sleep(0.9)  # lease보다 길고 max-on보다 짧은 구간을 기다린다.
             session.send("tus\n")
             session.expect("STATE ON")
             code, output, errors = session.finish()
@@ -322,8 +322,8 @@ class FanctlTests(unittest.TestCase):
             self.assertEqual(code, 0, errors)
 
     def test_stopped_process_expires_on_resume_without_automatic_restart(self):
-        # The dry-run process cannot run while SIGSTOPped. This only checks
-        # expiry on resume, not the kernel driver's independent delayed work.
+        # SIGSTOP 중에는 dry-run도 실행되지 않는다. resume 시 만료만 검증하며
+        # 커널 delayed work의 독립적인 보호 정지를 검증하는 시험은 아니다.
         with Session("--lease-ms", "500", "--max-on-ms", "3000") as session:
             session.send("on\n")
             session.expect("STATE ON")
@@ -332,13 +332,12 @@ class FanctlTests(unittest.TestCase):
             session.send("heartbeat\n")
             session.process.send_signal(signal.SIGCONT)
             session.expect("STATE OFF reason=lease")
-            # Poll may dispatch the queued command before the periodic status
-            # check; either order is valid. Ask again instead of counting
-            # duplicate notifications from one state transition.
+            # 주기 검사보다 명령이 먼저 처리될 수도 있으므로 알림 중복 횟수를 가정하지 않는다.
+
             session.send("status\n")
             session.expect("STATE OFF reason=lease")
             session.send("on\n")
-            session.expect("STATE ON")  # Explicit restart is allowed.
+            session.expect("STATE ON")  # 명시적 재기동은 허용한다.
             code, _, errors = session.finish()
             self.assertEqual(code, 0, errors)
 
@@ -358,7 +357,7 @@ class FanctlTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"SPEED level=2/5 duty=0%", result.stdout)
         self.assertIn(b"SPEED level=0/5 duty=0%", result.stdout)
-        self.assertIn(b"SPEED level=2/5 duty=100%", result.stdout)  # startup boost
+        self.assertIn(b"SPEED level=2/5 duty=100%", result.stdout)  # 기동 boost
         self.assertIn(b"STATE ON", result.stdout)
 
     def test_speed_boost_and_maximum_deadline(self):

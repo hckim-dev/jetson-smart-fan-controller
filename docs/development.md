@@ -45,16 +45,16 @@ LF-only parser는 raw PTY에서 CR Enter를 무시하는 결함이 있어CR/LF/C
 
 ## 근거와 원본
 
-주요 commit은 e2da01d(ON/OFF), 11ad335(PWM/LED/LCD), 0cbbf82(BMP/AUTO), adbd04b(EC11/CLI)입니다. 품질 개선 기준 commit은 32c9512이며, 이후 6단계의 검증 보강은 별도 변경입니다. 주요 조사 결과와 해결 과정은 이 문서에, 최신 검증 범위는 [quality-review](quality-review.md)에 정리합니다. 과거 원본은 로컬 `docs/history/`에 보존하고 `.gitignore`로 공개 대상에서 제외합니다.
+주요 commit은 e2da01d(ON/OFF), 11ad335(PWM/LED/LCD), 0cbbf82(BMP/AUTO), adbd04b(EC11/CLI)입니다. 품질 개선 기준 commit은 32c9512이며, 이후 6단계의 검증 보강은 별도 변경입니다. 주요 조사 결과와 해결 과정은 이 문서에, 최신 검증 범위는 [최종 검토](review.md)에 정리합니다. 과거 원본은 로컬 `docs/history/`에 보존하고 `.gitignore`로 공개 대상에서 제외합니다.
 
 ## 6단계 Process/IPC 재검토
 
-센서 process/pipe는 BMP180/AUTO 구현 중 이미 추가했습니다. 6단계 요청에서는 구조를 중복 구현하지 않고 정상 데이터 IPC와 제어 정책, 부모 강제 종료, SIGKILL fallback, fd 격리·회수 테스트를 보강했습니다. 종료 status 진단과 cleanup timeout 후 PID 추적을 개선했습니다. 설계 근거와 실물 확인은 [stage6-process-ipc](stage6-process-ipc.md)에 정리합니다.
+센서 process/pipe는 BMP180/AUTO 구현 중 이미 추가했습니다. 6단계 요청에서는 구조를 중복 구현하지 않고 정상 데이터 IPC와 제어 정책, 부모 강제 종료, SIGKILL fallback, fd 격리·회수 테스트를 보강했습니다. 종료 status 진단과 cleanup timeout 후 PID 추적을 개선했습니다. 설계 근거와 실물 확인은 [설계 문서](architecture.md)에 정리합니다.
 
 ## 7단계 필요한 작업만 thread로 분리
 
-모터/모드 상태는 단일 main owner로 유지하고 sensor process도 보존했습니다. Blocking 파일 기록만 선택형 worker로 추가하고 bounded queue, overflow accounting, signal mask, 종료 drain과 live object 수명을 검증했습니다. 설계와 한계는 [7단계](stage7-threads.md)에 기록했습니다.
+모터/모드 상태는 단일 main owner로 유지하고 sensor process도 보존했습니다. Blocking 파일 기록만 선택형 worker로 추가하고 bounded queue, overflow accounting, signal mask, 종료 drain과 live object 수명을 검증했습니다. 설계와 한계는 [동기화 설계](architecture.md)에 기록했습니다.
 
 ## 8단계 운영 가시성 확장
 
-기존 pipe/Mutex/lease가 현재 규모의 전달·동기화·제어 중단 보호를 담당하므로, 새로운 IPC나 재부팅 watchdog을 중복 도입하지 않았습니다. 실제 운전 상태를 확인할 stats/Monitor를 우선했습니다. 자동 respawn은 회수·backoff·재기동 보호의 추가 검증이 필요해 보류했습니다. 구현과 보류 판단은 [8단계](stage8-operations.md)에 정리했습니다.
+기존 pipe/Mutex/lease가 현재 규모의 전달·동기화·제어 중단 보호를 담당하므로, 새로운 IPC나 재부팅 watchdog을 중복 도입하지 않았습니다. 실제 운전 상태를 확인할 stats/Monitor를 우선했습니다. 자동 respawn은 회수·backoff·재기동 보호의 추가 검증이 필요해 보류했습니다. 구현과 보류 판단은 [운영 명령](build-run.md)에 정리했습니다.

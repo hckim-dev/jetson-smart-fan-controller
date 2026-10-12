@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <pthread.h>
-/* Inspect snapshots under the production mutex without I2C or stdout work. */
+/* 실제 I²C/출력 대신 production mutex 아래의 snapshot을 검사한다. */
 #include "../app/lcd.c"
 
 static void *publisher(void *argument)
