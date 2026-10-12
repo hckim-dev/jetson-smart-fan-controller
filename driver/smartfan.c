@@ -60,10 +60,10 @@ static u32 smartfan_remaining_ms(unsigned long deadline, unsigned long now)
 static int smartfan_pwm_apply(struct smartfan *fan, u32 duty_percent, bool enabled)
 {
 	struct pwm_state state = {
-	    .period = fan->period_ns,
-	    .duty_cycle = (u64)fan->period_ns * duty_percent / 100,
-	    .polarity = PWM_POLARITY_NORMAL,
-	    .enabled = enabled,
+		.period = fan->period_ns,
+		.duty_cycle = (u64)fan->period_ns * duty_percent / 100,
+		.polarity = PWM_POLARITY_NORMAL,
+		.enabled = enabled,
 	};
 
 	return pwm_apply_state(fan->pwm, &state);
@@ -225,10 +225,10 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 	struct smartfan *fan = file->private_data;
 	struct smartfan_request request;
 	struct smartfan_speed_request speed_request;
-	struct smartfan_status status = {0};
-	struct smartfan_speed_status speed_status = {0};
+	struct smartfan_status status = { 0 };
+	struct smartfan_speed_status speed_status = { 0 };
 	struct smartfan_led_request led_request;
-	struct smartfan_led_status led_status = {0};
+	struct smartfan_led_status led_status = { 0 };
 	struct smartfan_auto_request auto_request;
 	bool automatic = cmd == SMARTFAN_IOC_SET_AUTO;
 	unsigned long now;
@@ -355,11 +355,11 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			fan->lease_deadline = now + msecs_to_jiffies(fan->lease_ms);
 			if (fan->pwm) {
 				fan->boosting =
-				    fan->boost_ms && fan->level < SMARTFAN_MAX_SPEED_LEVEL;
+					fan->boost_ms && fan->level < SMARTFAN_MAX_SPEED_LEVEL;
 				if (fan->boosting)
 					fan->boost_deadline = now + msecs_to_jiffies(fan->boost_ms);
 				ret = smartfan_set_duty_locked(
-				    fan, fan->boosting ? 100 : smartfan_level_duty(fan->level));
+					fan, fan->boosting ? 100 : smartfan_level_duty(fan->level));
 				if (ret)
 					break;
 			} else {
@@ -370,8 +370,8 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			if (time_after_eq(jiffies, fan->on_deadline) ||
 			    time_after_eq(jiffies, fan->lease_deadline)) {
 				u32 reason = time_after_eq(jiffies, fan->on_deadline)
-						 ? SMARTFAN_STOP_MAX_ON
-						 : SMARTFAN_STOP_LEASE;
+						     ? SMARTFAN_STOP_MAX_ON
+						     : SMARTFAN_STOP_LEASE;
 
 				ret = smartfan_stop_locked(fan, reason);
 				if (!ret)
@@ -407,9 +407,9 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 				break;
 			}
 			ret = fan->stop_reason == SMARTFAN_STOP_LEASE ||
-				      fan->stop_reason == SMARTFAN_STOP_MAX_ON
-				  ? -ETIMEDOUT
-				  : -EPIPE;
+					      fan->stop_reason == SMARTFAN_STOP_MAX_ON
+				      ? -ETIMEDOUT
+				      : -EPIPE;
 			break;
 		}
 		fan->lease_deadline = now + msecs_to_jiffies(fan->lease_ms);
@@ -464,7 +464,7 @@ static long smartfan_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		speed_status.period_ns = fan->period_ns;
 		if (fan->boosting)
 			speed_status.boost_remaining_ms =
-			    smartfan_remaining_ms(fan->boost_deadline, now);
+				smartfan_remaining_ms(fan->boost_deadline, now);
 		break;
 	case SMARTFAN_IOC_SET_LEDS:
 		if (!fan->leds) {
@@ -504,14 +504,14 @@ out:
 }
 
 static const struct file_operations smartfan_fops = {
-    .owner = THIS_MODULE,
-    .open = smartfan_open,
-    .release = smartfan_release,
-    .unlocked_ioctl = smartfan_ioctl,
+	.owner = THIS_MODULE,
+	.open = smartfan_open,
+	.release = smartfan_release,
+	.unlocked_ioctl = smartfan_ioctl,
 #ifdef CONFIG_COMPAT
-    .compat_ioctl = compat_ptr_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
 #endif
-    .llseek = no_llseek,
+	.llseek = no_llseek,
 };
 
 static int smartfan_get_output(struct device *dev, const char *name, struct gpio_desc **desc)
@@ -611,8 +611,8 @@ static int smartfan_probe(struct platform_device *pdev)
 		if ((pwm_args.period && (pwm_args.period < 1000000 || pwm_args.period > 4000000)) ||
 		    pwm_args.polarity != PWM_POLARITY_NORMAL) {
 			ret = dev_err_probe(
-			    dev, -EINVAL,
-			    "PWM requires normal polarity and period 1000000..4000000 ns\n");
+				dev, -EINVAL,
+				"PWM requires normal polarity and period 1000000..4000000 ns\n");
 			/* 잘못된 PWM 인자로 cleanup state를 적용하지 않는다. */
 			fan->pwm = NULL;
 			goto fail;
@@ -639,8 +639,8 @@ static int smartfan_probe(struct platform_device *pdev)
 		}
 		for (i = 0; i < fan->leds->ndescs; ++i) {
 			if (gpiod_is_active_low(fan->leds->desc[i])) {
-				ret =
-				    dev_err_probe(dev, -EINVAL, "LED GPIOs must be active high\n");
+				ret = dev_err_probe(dev, -EINVAL,
+						    "LED GPIOs must be active high\n");
 				goto fail;
 			}
 		}
@@ -740,18 +740,18 @@ static int __maybe_unused smartfan_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(smartfan_pm_ops, smartfan_suspend, smartfan_resume);
 
-static const struct of_device_id smartfan_of_match[] = {{.compatible = "edu,jetson-smartfan"}, {}};
+static const struct of_device_id smartfan_of_match[] = { { .compatible = "edu,jetson-smartfan" },
+							 {} };
 MODULE_DEVICE_TABLE(of, smartfan_of_match);
 
 static struct platform_driver smartfan_driver = {
-    .probe = smartfan_probe,
-    .remove_new = smartfan_remove,
-    .shutdown = smartfan_shutdown,
-    .driver =
-	{
-	    .name = "smartfan",
-	    .of_match_table = smartfan_of_match,
-	    .pm = &smartfan_pm_ops,
+	.probe = smartfan_probe,
+	.remove_new = smartfan_remove,
+	.shutdown = smartfan_shutdown,
+	.driver = {
+		.name = "smartfan",
+		.of_match_table = smartfan_of_match,
+		.pm = &smartfan_pm_ops,
 	},
 };
 module_platform_driver(smartfan_driver);

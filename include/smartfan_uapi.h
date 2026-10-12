@@ -17,14 +17,12 @@
 #define SMARTFAN_AUTO_MAX_AGE_MS 3000U
 #define SMARTFAN_LED_SEGMENTS 8U
 
-enum smartfan_led_mode
-{
+enum smartfan_led_mode {
 	SMARTFAN_LED_AUTO = 0,
 	SMARTFAN_LED_TEST = 1,
 };
 
-enum smartfan_stop_reason
-{
+enum smartfan_stop_reason {
 	SMARTFAN_STOP_INITIAL = 0,
 	SMARTFAN_STOP_USER = 1,
 	SMARTFAN_STOP_CLOSE = 2,
@@ -36,15 +34,13 @@ enum smartfan_stop_reason
 	SMARTFAN_STOP_SENSOR = 8,
 };
 
-struct smartfan_request
-{
+struct smartfan_request {
 	__u32 abi_version;
 	__u32 enabled;
 	__u32 reserved[2];
 };
 
-struct smartfan_status
-{
+struct smartfan_status {
 	__u32 abi_version;
 	__u32 running;
 	__u32 stop_reason;
@@ -60,15 +56,13 @@ struct smartfan_status
 #define SMARTFAN_IOC_GET _IOR('F', 3, struct smartfan_status)
 
 /* ABI 확장은 기존 SET/GET 구조와 ioctl 번호를 유지한다. */
-struct smartfan_speed_request
-{
+struct smartfan_speed_request {
 	__u32 abi_version;
 	__u32 level;
 	__u32 reserved[2];
 };
 
-struct smartfan_speed_status
-{
+struct smartfan_speed_status {
 	__u32 abi_version;
 	__u32 level;
 	__u32 max_level;
@@ -82,16 +76,14 @@ struct smartfan_speed_status
 #define SMARTFAN_IOC_SET_SPEED _IOW('F', 4, struct smartfan_speed_request)
 #define SMARTFAN_IOC_GET_SPEED _IOR('F', 5, struct smartfan_speed_status)
 
-struct smartfan_led_request
-{
+struct smartfan_led_request {
 	__u32 abi_version;
 	__u32 mode;
 	__u32 count;
 	__u32 reserved;
 };
 
-struct smartfan_led_status
-{
+struct smartfan_led_status {
 	__u32 abi_version;
 	__u32 mode;
 	__u32 count;
@@ -102,8 +94,7 @@ struct smartfan_led_status
 #define SMARTFAN_IOC_GET_LEDS _IOR('F', 7, struct smartfan_led_status)
 
 /* 원자적 AUTO 갱신. 사용자의 명시적 ON만 rearm=1을 설정한다. */
-struct smartfan_auto_request
-{
+struct smartfan_auto_request {
 	__u32 abi_version;
 	__u32 level;
 	__u32 rearm;
@@ -126,13 +117,10 @@ static inline int smartfan_auto_rearm_allowed(int inhibited, __u32 explicit_rear
 static inline __u32 smartfan_level_leds(__u32 level)
 {
 	return (level * SMARTFAN_LED_SEGMENTS + SMARTFAN_MAX_SPEED_LEVEL - 1U) /
-		   SMARTFAN_MAX_SPEED_LEVEL;
+	       SMARTFAN_MAX_SPEED_LEVEL;
 }
 
 /* 풍속별 duty 목표이며 실제 RPM 보정값은 아니다. */
-static inline __u32 smartfan_level_duty(__u32 level)
-{
-	return level ? 50U + level * 10U : 0U;
-}
+static inline __u32 smartfan_level_duty(__u32 level) { return level ? 50U + level * 10U : 0U; }
 
 #endif

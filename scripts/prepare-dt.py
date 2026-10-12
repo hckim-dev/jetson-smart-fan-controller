@@ -257,7 +257,7 @@ def main():
         "x",
     )
     raw_provider_properties = {
-        prop: get_property(base, PINMUX, prop, "bx")
+        prop: get_property(preparation_base, PINMUX, prop, "bx")
         for prop in properties(preparation_base, PINMUX)
     }
     raw_builtin_pwm = snapshot_node(preparation_base, protected_paths[1])

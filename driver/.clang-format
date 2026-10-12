@@ -2,7 +2,9 @@
 BasedOnStyle: LLVM
 BreakBeforeBraces: Linux
 IndentWidth: 8
+ContinuationIndentWidth: 8
 TabWidth: 8
 UseTab: Always
+Cpp11BracedListStyle: false
 ColumnLimit: 100
 SortIncludes: false

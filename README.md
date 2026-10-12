@@ -35,7 +35,7 @@ flowchart LR
 | 구분       | 확인 내용                                                                                 |
 | ---------- | ----------------------------------------------------------------------------------------- |
 | 실물       | 모터·엔코더·LED·센서·LCD 문자 표시, AUTO 정지/복구, lease·30초 제한·Ctrl+C 정지 확인 보고 |
-| 소프트웨어 | C 테스트 11개, CLI 37개, 정리/DT 제안 4개, GCC analyzer·ASan/UBSan·ThreadSanitizer 통과   |
+| 소프트웨어 | C 테스트 11개, CLI 37개, 정리/DT 제안 6개, GCC analyzer·ASan/UBSan·ThreadSanitizer 통과   |
 
 실물 확인은 기존 통합 동작 기준입니다. 최종 종료 경로 수정 후 재확인과 LCD 대비·전원 전류 여유·RPM/발열·실제 suspend 측정은 남아 있습니다. [검증 범위](docs/review.md)
 

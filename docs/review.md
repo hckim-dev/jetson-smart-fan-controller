@@ -1,13 +1,13 @@
 # 검증
 
-**소프트웨어 검증과 실물 확인을 분리해 기록합니다.** 아래는 2026-10-12 최종 코드 검증 결과이며 이번 문서 정리에서 코드를 변경하거나 시험을 다시 수행한 것은 아닙니다.
+**소프트웨어 검증과 실물 확인을 분리해 기록합니다.** 아래는 2026-10-12 DT provider 비교 수정과 커널 형식 정리 후 재검증한 결과입니다.
 
 ## 소프트웨어
 
 | 검사                                       | 결과 / 범위                                 |
 | ------------------------------------------ | ------------------------------------------- |
 | Native app/module/DT, kernel W=1           | 빌드 통과                                   |
-| C 11개 · CLI 37개 · 정리 1개 · DT 제안 3개 | 정상/오류·입력·IPC·AUTO·자원 정리 회귀 통과 |
+| C 11개 · CLI 37개 · 정리 1개 · DT 제안 5개 | 정상/오류·입력·IPC·AUTO·자원 정리 회귀 통과 |
 | GCC analyzer                               | 사용자 소스 12개 통과                       |
 | ASan/UBSan                                 | 테스트 9개 통과; full pipe 종료 포함        |
 | ThreadSanitizer                            | Log/LCD snapshot 스트레스 2개 통과          |
@@ -30,4 +30,4 @@ Mock/stub과 sanitizer는 실제 전기적 조건이나 모든 interleaving의 �
 
 [테스트 소스](../tests/) · [검사 명령](build-run.md) · [실물 절차](final-test.md)
 
-원본 결과는 로컬 `build/final-review-confirmation.log`, `final-module-review.log`, `final-checkpatch-confirmation.log`, `final-dt-review.log`에 보존했습니다. Build/history/원본 사진은 Git에서 제외합니다.
+원본 결과는 로컬 `build/final-fix-validation.log`, `final-fix-module.log`, `final-fix-checkpatch.log`, `final-fix-dt.log`에 보존했습니다. Build/history/원본 사진은 Git에서 제외합니다.
