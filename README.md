@@ -1,44 +1,47 @@
 # Jetson Smart Fan Controller
 
-Jetson Orin Nano에서 Linux Kernel Driver와 C 사용자 프로그램으로 모터, 로터리 엔코더, LED Bar, LCD, BMP180을 통합한 스마트 선풍기 제어 프로젝트입니다.
+**모터 제어부터 장애 시 정지까지, Linux Kernel Driver와 C로 구현한 스마트 선풍기입니다.**
 
-단순한 GPIO 출력에서 출발해 PWM 풍속 제어, 온도 AUTO 정책, 센서 프로세스 IPC, LCD 스레드를 구현했습니다. **모터 출력과 정지 정책은 커널이 소유**하고, 사용자 프로그램은 입력과 운전 정책을 조정합니다. 현재 범위는 1~8단계이며 7단계의 비동기 파일 기록에 이어 8단계에서 session 통계와 선택형 CLI Monitor를 추가했습니다.
+`C11` · `Linux 5.15` · `Jetson Orin Nano` · `GPIO / PWM / I²C` · `Process / Thread`
 
-## 핵심 기능
+## 어떤 동작을 하나요?
 
-| 기능            | 구현                                                                                               |
-| --------------- | -------------------------------------------------------------------------------------------------- |
-| 수동 제어       | ON/OFF, 풍속 0~5, 4ms 요청 PWM(목표250Hz), 저속 기동 시 200ms boost                                |
-| 로터리          | GPIO v2 양쪽 edge, Gray 4전이 해석, 방향 반전, 상·하한 제한                                        |
-| 온도 AUTO       | BMP180 온도에 따른 0~5단계, 하강 경계 1°C hysteresis                                               |
-| 출력 표시       | LED Bar 8칸, LCD 16×2 모드·온도·선택 풍속                                                          |
-| 정지 정책       | 단일 controller, close/오류 정지, heartbeat lease 2초, 연속 ON 30초 제한                           |
-| 프로세스/스레드 | 센서 fork/exec + 32-byte pipe IPC, LCD worker + mutex/condition, 선택형 log worker + bounded queue |
-| 회복 정책       | 센서 fault/stale 또는 보호 정지 뒤에는 명시적인 ON 필요                                            |
+- **수동 제어:** EC11 엔코더로 풍속 0~5단계 선택, LED Bar·LCD 연동
+- **자동 제어:** BMP180 온도로 목표 풍속 결정, hysteresis로 경계 진동 억제
+- **보호 정지:** heartbeat 중단 시 lease 2초, 연속 구동 30초 제한
+- **장애 대응:** 센서 오류·데이터 만료 시 AUTO 정지, 복구 후 명시적 ON 요구
+
+## 어떻게 설계했나요?
 
 ```mermaid
 flowchart LR
-    ENC[EC11 + NPN] --> GPIO[GPIO v2 edge fd]
-    GPIO --> CLI[fanctl · poll loop]
-    BMP[BMP180 child] --> PIPE[32-byte pipe]
-    PIPE --> CLI
-    CLI --> IOCTL[/dev/smartfan · ioctl]
-    IOCTL --> DRV[Kernel Driver · mutex / deadlines]
-    DRV --> MOTOR[L298N / motor]
-    DRV --> LED[LED Bar]
-    CLI --> WORKER[LCD worker]
-    WORKER --> LCD[PCF8574 / LCD1602]
+    INPUT[CLI · EC11] --> APP[fanctl · 제어 정책]
+    SENSOR[BMP180 센서 프로세스] -->|pipe| APP
+    APP -->|ioctl| DRIVER[smartfan.ko · 출력과 보호 정지]
+    DRIVER --> OUT[모터 · LED Bar]
+    APP --> WORKER[LCD · 로그 worker]
 ```
 
-## 현재 검증 상태
+| 설계 선택                               | 해결한 문제                                          |
+| --------------------------------------- | ---------------------------------------------------- |
+| Kernel이 GPIO/PWM 출력과 정지 정책 소유 | 애플리케이션 중단에 대한 보호를 사용자 루프에서 분리 |
+| 센서 process + LCD/log thread           | Blocking I²C·파일 기록을 heartbeat 경로에서 분리     |
+| AUTO 갱신을 kernel mutex 안에서 검증    | 상태 조회와 기동 사이의 보호 정지 경쟁 조건 방지     |
 
-Native build와 소프트웨어 회귀 검증을 통과했습니다. 모터·LED·BMP180 및 파이프 없는 실행의 명령 입력/로터리 동작은 사용자 실물 확인을 받았습니다. 사용자에게서 AUTO 정지·복구, lease 정지, 30초 제한, Ctrl+C 정지도 확인받았습니다. AUTO 복구 시험의 구체적인 고장 주입 방식과 모든 전기 특성이 측정된 것은 아닙니다.
+직접 구현한 driver는 기존 Linux GPIO/PWM provider를 재사용합니다. [설계 상세](docs/architecture.md) · [문제 해결 사례](docs/development.md)
 
-**남은 항목:** LCD 전체3.3V 구성의 대비 부족, Jetson 5V 핀으로 공급하는 모터의 기동/정지 전류와 전압 여유, 실제 system suspend, 단계별 RPM/발열/장기 반복 측정. 구현 및 단위 테스트 통과를 전기적 안전 인증이나 실물 worst-case 성능 보장으로 표현하지 않습니다.
+## 어디까지 확인했나요?
 
-## 빠른 시작
+| 구분       | 확인 내용                                                                                 |
+| ---------- | ----------------------------------------------------------------------------------------- |
+| 실물       | 모터·엔코더·LED·센서·LCD 문자 표시, AUTO 정지/복구, lease·30초 제한·Ctrl+C 정지 확인 보고 |
+| 소프트웨어 | C 테스트 11개, CLI 37개, 정리/DT 제안 4개, GCC analyzer·ASan/UBSan·ThreadSanitizer 통과   |
 
-검증 환경은 Jetson aarch64, Ubuntu22.04, L4T36.5.2, kernel5.15.199-tegra, GCC11.4.0, glibc2.35입니다. GPIO/PWM/I²C 설정이 적용된 현재 장비를 기준으로 합니다.
+실물 확인은 기존 통합 동작 기준입니다. 최종 종료 경로 수정 후 재확인과 LCD 대비·전원 전류 여유·RPM/발열·실제 suspend 측정은 남아 있습니다. [검증 범위](docs/review.md)
+
+## 직접 실행하려면
+
+검증 장비: Ubuntu 22.04 · L4T 36.5.2 · kernel 5.15.199-tegra · GCC 11.4.0.
 
 ```sh
 make all
@@ -46,38 +49,16 @@ make test
 ./build/fanctl --dry-run --encoder --bmp180 --lcd
 ```
 
-Dry-run은 실제 GPIO/I²C에 접근하지 않습니다. `temp 27`, `mode auto`, `on`, `temp error`, `off`, `quit`로 정책을 시험할 수 있습니다.
+Dry-run은 하드웨어에 접근하지 않습니다. 실제 장비는 DT와 배선 설정이 필요합니다. [실행·명령](docs/build-run.md) · [하드웨어](docs/hardware.md) · [통합 테스트](docs/final-test.md)
 
-실제 장비에서는 배선과 전원 상태를 확인한 뒤:
+<details>
+<summary>소스에서 확인할 부분</summary>
 
-```sh
-sudo ./build/fanctl --encoder --bmp180 --lcd --lcd-address 0x27
-```
+| 경로                                      | 역할                                   |
+| ----------------------------------------- | -------------------------------------- |
+| [driver/](driver/) · [include/](include/) | platform driver · 고정 폭 ioctl UAPI   |
+| [app/](app/)                              | 제어 정책 · 센서 IPC · LCD/로그 동기화 |
+| [dts/](dts/) · [scripts/](scripts/)       | pinmux · DT 준비/설치 검증             |
+| [tests/](tests/)                          | 정상 동작·장애·경쟁 조건·종료 회귀     |
 
-시작 상태는 MANUAL/OFF입니다. `mode manual`, `speed 5`, `on`, `status`, `off`, `quit`를 한 줄씩 입력합니다. 이 장비에서 외부 `| tee`를 붙이면 명령 입력이 전달되지 않는 현상을 관찰했으므로 interactive 실행은 위처럼 직접 실행합니다. 내부 sudo/PTY 원인은 확정하지 않았습니다.
-
-## 문서
-
-- [시스템 설계·IPC·동기화](docs/architecture.md)
-- [현재 하드웨어·배선·전원 한계](docs/hardware.md)
-- [빌드·실행·명령·통계](docs/build-run.md)
-- [최종 통합 테스트](docs/final-test.md)
-- [개발 과정과 설계 결정](docs/development.md)
-- [발표·포트폴리오 설명](docs/portfolio.md)
-- [최종 검토·검증 결과](docs/review.md)
-
-## 저장소 구조
-
-```text
-app/       main.c / controller.c / fan-device.c, peripheral modules, diagnostics
-driver/    platform driver + miscdevice + GPIO/PWM consumers
-include/    fixed-width ioctl UAPI
-dts/       Tegra234 overlay source
-scripts/    offline DT preparation / guarded installer
-tests/     mock, IPC, PTY, CLI, cleanup regression tests
-docs/      current architecture, hardware, tests and selected development notes
-```
-
-빌드 산출물·실험 로그는 `build/`에 생성되며 Git에서 제외합니다. `make clean`은 알려진 산출물만 제거하고 실험 로그·사용자 메모·부팅 제안 자료는 보존합니다. Git commit/push는 사용자가 직접 수행합니다.
-
-과거 상세 조사 원본은 로컬 `docs/history/`에 보존하며 Git에서 제외합니다. 공개 개발 기록은 `docs/development.md`를 기준으로 합니다.
+</details>

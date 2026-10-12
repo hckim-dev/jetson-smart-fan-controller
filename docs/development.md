@@ -1,60 +1,22 @@
-# 개발 과정과 설계 결정
+# 문제 해결
 
-## 요구 단계와 실제 구현
+**동작 여부를 확인한 뒤, 실패 원인을 하드웨어·커널·사용자 공간으로 나누어 해결했습니다.**
 
-| 요구 단계        | 현재 구현                                               | 증거 / 범위                                                    |
-| ---------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
-| 1. Kernel ON/OFF | platform driver, miscdevice, GPIO consumer, bounded run | native module build, 사용자 motor 회전 보고                    |
-| 2. Rotary/PWM    | GPIO v2 양edge/Gray, 0~5단계, NPN 입력 보강             | mock request/decoder tests, 사용자 통합 입력 성공              |
-| 3. LCD           | PCF8574 4bit 초기화, worker, 모드/온도/풍속             | protocol/mock tests, 사용자 문자 표시(대비 미해결)             |
-| 4. LED Bar       | optional GPIO8개, 독립시험/풍속연동                     | level mapping tests, 사용자8칸 점등                            |
-| 5. BMP180/AUTO   | calibration/보정식, hysteresis, fault/stale stop        | Bosch 예제와 실제I²C/IPC, AUTO 회귀 및 사용자정지/복구보고     |
-| 6. Process/IPC   | sensor fork/exec/pipe/waitpid/signals                   | partial IPC/exec 오류/수명 tests, 실제child sample             |
-| 7. Thread/Sync   | LCD snapshot worker, 선택형 파일 log queue/worker       | concurrent producers/snapshots, sanitizer 및 CLI 로그 검증     |
-| 8. Operations    | session 통계, 선택형 CLI Monitor                        | CLI fault/recovery counters, 출력 주기와 heartbeat/max-on 회귀 |
+| 문제                             | 확인한 근거                                                         | 해결                                                                |
+| -------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| ON 상태인데 모터 무회전          | GPIO claim과 달리 pinmux의 tristate/input 설정이 출력 조건과 불일치 | DT/pad 설정 보완 후 실물 회전 확인                                  |
+| EC11 무응답·정지 중 가짜 입력    | Raw edge/level 비교, 고정 GND/3.3V는 안정적                         | 채널별 NPN 입력 보강 후 회전 확인; Gray cycle·누락 재동기화 유지    |
+| 보호 정지 뒤 AUTO 재기동 경쟁    | GET snapshot과 기동 사이에 suspend/정지가 끼어드는 경로             | `SET_AUTO`에서 차단·freshness·rearm을 kernel mutex 안에서 원자 검증 |
+| 센서 종료 결과가 간헐적으로 실패 | Full pipe에서 read end close와 child write의 SIGPIPE 경쟁 재현      | SIGTERM/회수 시도 후 pipe close, blocked write 종료 회귀 추가       |
+| DT 재준비 시 잘못된 base 사용    | Fallback을 선택해도 retained overlay에는 활성 DTB를 입력            | 보존 base를 일관되게 사용, 선택·누락·불일치 회귀 추가               |
 
-구현 순서는 전기 조건과 실물 확인에 맞춰 조정했습니다. Motor→PWM→LED→LCD→BMP/AUTO/IPC를 진행하고, 미해결 EC11 입력을 마지막에 NPN 회로로 보강했습니다. LCD I/O를 main에서 분리하기 위한 thread는 이미 구현된 구조이며 별도의 다음 단계 확장을 추가한 것이 아닙니다.
+## 설계에서 남긴 선택
 
-## 1. GPIO 요청 성공과 실제 출력은 달랐다
+- Blocking 센서는 process, LCD·파일 기록은 worker로 분리하고 **제어 상태는 main 한 곳에서 변경**합니다.
+- 정상 센서값은 반복 출력하지 않습니다. `status`·선택형 `monitor`·event log로 관찰합니다.
+- 샘플 공급 복구와 모터 재기동을 구분합니다. **장애 복구만으로 다시 ON하지 않습니다.**
+- 기술 수를 늘리는 대신 현재 통신량·고장 경로에 필요한 IPC와 동기화만 사용합니다.
 
-초기ON 상태는 표시됐지만 모터가 회전하지 않았습니다. 실제 pinconf의 tristate/input 설정을 확인하고 출력 pad 적용을 보완한 뒤 사용자 회전을 확인했습니다. GPIO claim이나 logical 상태만으로 header 출력/회전을 증명할 수 없다는 점을 기록했습니다. 물리핀·gpiochip line·DT specifier를 구분해 provider를 사용했습니다.
+입력 CR/LF/CRLF 처리는 PTY 회귀로 검증했습니다. 이 장비의 `sudo + tee` 입력 무응답은 파이프 제거 후 해소됐으나 내부 원인을 확정하지 않았습니다.
 
-## 2. EC11 무응답/가짜 회전의 계층 분리
-
-기존7/31 입력을12/38로 옮긴 뒤에도 문제가 남았습니다. Raw edge, IRQ, 직접 level sampling을 비교했고, debounce0은 정지 중에도 변화하고1/2ms는 정상 회전도 거의 제거했습니다. 단순 STEP rate limit 대신 독립 진단과 안정 시간 필터를 시험했지만 실물 입력을 복구하지 못했습니다.
-
-GPIO를 GND/3.3V에 고정한 시험은 모두 안정적이었습니다. 이후 사용자가 채널별 NPN(베이스10kΩ / 컬렉터 pull-up1kΩ) 회로에서 회전 성공을 확인했습니다. Push-pull buffer가 유력 후보였지만 필수라고 단정했던 판단은 수정했습니다. 작은 pull 저항의 조건부 허용과 실제 결과를 반영해 현 회로를 유지했습니다.
-
-운영은 검증된 기간 0을 사용하고, Gray 4전이와 누락시 재동기화를 유지합니다. 진단용 software filter는 운영 성공을 대신하는 증거로 사용하지 않습니다.
-
-## 3. AUTO의 GET→ON 경쟁 조건
-
-여러 ioctl의 상태 snapshot 사이에 suspend/보호 정지가 끼어들면 오래된OFF/USER 상태로 자동 재시작할 수 있었습니다. 반복 GET으로 해결하지 않고 SET_AUTO에 보호 정지 latch/freshness/rearm을 넣어 kernel mutex 안에서 검사하도록 보완했습니다. Mock으로 경쟁 경로를 검사하며 실제 system suspend의 실물 시험은 별도입니다.
-
-## 4. Blocking I²C와 heartbeat 분리
-
-센서 conversion과 LCD 송신을 main에서 수행하면 입력/heartbeat 처리가 지연될 수 있습니다. Sensor는 별도 process, LCD는 snapshot worker로 분리했습니다. IPC는 고정frame/partial I/O/sequence/range를 검사하며, LCD 변경행만 전송합니다. 메모리 공유가 필요 없는 센서에는 pipe가 충분했습니다.
-
-후속 품질 검토에서는 fork~exec 구간의 상속된 신호 핸들러 때문에 SIGTERM 정리가 지연되는 경로를 재현했습니다. Child default disposition과 mask를 exec 전에 설정해 보완했습니다. LCD join timeout 뒤 살아 있는 객체를 free하지 않는 수명 정책도 테스트합니다.
-
-## 5. 명령 입력 장애와 과도한 출력
-
-BMP 정상sample마다 MODE/SENSOR를 출력해 명령 결과가 가려졌습니다. Normal 측정은 조용히 유지하고 상태전이와status 요청만 표시하도록 바꿨습니다. 수신명령은CMD로 추적합니다.
-
-LF-only parser는 raw PTY에서 CR Enter를 무시하는 결함이 있어CR/LF/CRLF를 지원했습니다. 실제 사용자의 sudo+tee 실행은 canonical=1/icrnl=1에서도 입력이 안 됐으므로 같은 원인으로 확정하지 않았습니다. 외부 파이프 제거 후 명령 입력, --encoder 추가 후 로터리 통합 성공을 확인했습니다. sudo 내부 원인을 분석 완료했다고 주장하지 않습니다.
-
-## 근거와 원본
-
-주요 commit은 e2da01d(ON/OFF), 11ad335(PWM/LED/LCD), 0cbbf82(BMP/AUTO), adbd04b(EC11/CLI)입니다. 품질 개선 기준 commit은 32c9512이며, 이후 6단계의 검증 보강은 별도 변경입니다. 주요 조사 결과와 해결 과정은 이 문서에, 최신 검증 범위는 [최종 검토](review.md)에 정리합니다. 과거 원본은 로컬 `docs/history/`에 보존하고 `.gitignore`로 공개 대상에서 제외합니다.
-
-## 6단계 Process/IPC 재검토
-
-센서 process/pipe는 BMP180/AUTO 구현 중 이미 추가했습니다. 6단계 요청에서는 구조를 중복 구현하지 않고 정상 데이터 IPC와 제어 정책, 부모 강제 종료, SIGKILL fallback, fd 격리·회수 테스트를 보강했습니다. 종료 status 진단과 cleanup timeout 후 PID 추적을 개선했습니다. 설계 근거와 실물 확인은 [설계 문서](architecture.md)에 정리합니다.
-
-## 7단계 필요한 작업만 thread로 분리
-
-모터/모드 상태는 단일 main owner로 유지하고 sensor process도 보존했습니다. Blocking 파일 기록만 선택형 worker로 추가하고 bounded queue, overflow accounting, signal mask, 종료 drain과 live object 수명을 검증했습니다. 설계와 한계는 [동기화 설계](architecture.md)에 기록했습니다.
-
-## 8단계 운영 가시성 확장
-
-기존 pipe/Mutex/lease가 현재 규모의 전달·동기화·제어 중단 보호를 담당하므로, 새로운 IPC나 재부팅 watchdog을 중복 도입하지 않았습니다. 실제 운전 상태를 확인할 stats/Monitor를 우선했습니다. 자동 respawn은 회수·backoff·재기동 보호의 추가 검증이 필요해 보류했습니다. 구현과 보류 판단은 [운영 명령](build-run.md)에 정리했습니다.
+[구현 구조](architecture.md) · [회귀 근거](review.md) · [테스트 소스](../tests/)
