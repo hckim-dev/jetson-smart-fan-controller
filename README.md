@@ -17,9 +17,7 @@
 - **보호 정지:** heartbeat 중단 시 lease 2초, 연속 구동 30초 제한
 - **장애 대응:** 센서 오류·데이터 만료 시 AUTO 정지, 복구 후 명시적 ON 요구
 
-<p align="center">
-  <img width="3000" height="4000" alt="Image" src="https://github.com/user-attachments/assets/1d42554c-e0c0-4a2c-aa6d-fc792742a5ed" />
-</p>
+https://github.com/user-attachments/assets/dc3038fa-8bba-4b85-97e1-cff44958b01e
 
 ## 어떻게 설계했나요?
 
